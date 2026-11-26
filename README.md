@@ -37,7 +37,7 @@
 > Потрібен **Arch Linux** (або похідний) і **Hyprland ≥ 0.57** (з підтримкою `hyprland.lua`).
 
 ```bash
-git clone https://github.com/<твій-нік>/hyprland-dotfiles.git
+git clone https://github.com/Volod3/hyprland-dotfiles.git
 cd hyprland-dotfiles
 ./install.sh
 ```
