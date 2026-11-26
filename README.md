@@ -4,11 +4,29 @@
 анімовані паралакс-шпалери з візуалізатором музики, 5 тем, що перефарбовують увесь інтерфейс,
 бокова панель як у KDE, буфер обміну, екран блокування, OSD, меню пристроїв і ще купа всього.
 
+![Небо й хмари](screenshots/sky.png)
+
 | Неон Сіті | Синтвейв |
 |---|---|
 | ![](screenshots/neon-city.png) | ![](screenshots/neon-sunset.png) |
 | **Північне сяйво** | **Зоряні гори** |
 | ![](screenshots/aurora.png) | ![](screenshots/mountains.png) |
+
+## Інтерфейс
+
+| Бокова панель (Win) | Меню тем (Pause) |
+|---|---|
+| ![](screenshots/ui/sidepanel.png) | ![](screenshots/ui/themes-menu.png) |
+| **Налаштування (Win+I)** | **Буфер обміну (Win+V)** |
+| ![](screenshots/ui/settings.png) | ![](screenshots/ui/clipboard.png) |
+| **Система (waybar)** | **Мережа** |
+| ![](screenshots/ui/panel-sys.png) | ![](screenshots/ui/panel-net.png) |
+| **Bluetooth** | **Звук** |
+| ![](screenshots/ui/panel-bt.png) | ![](screenshots/ui/panel-audio.png) |
+| **Календар** | **Флешки й пристрої** |
+| ![](screenshots/ui/panel-cal.png) | ![](screenshots/ui/panel-dev.png) |
+| **Меню живлення (Win+M)** | **OSD гучності** |
+| ![](screenshots/ui/panel-power.png) | ![](screenshots/ui/osd.png) |
 
 ## Що всередині
 
