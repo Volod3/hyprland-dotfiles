@@ -1,0 +1,11 @@
+/* Згенеровано tools/theme — кольори поточної теми. Не редагуй вручну. */
+@define-color accent #9ec4ff;
+@define-color softpink #c4b0ff;
+@define-color surface alpha(#0b1020, 0.76);
+@define-color popup alpha(#0b1020, 0.94);
+@define-color text #e6ecfa;
+@define-color hoverBg @accent;
+@define-color hoverFg #0a1124;
+@define-color activeBg @accent;
+@define-color activeFg #0a1124;
+@define-color shadow alpha(@accent, 0.2);

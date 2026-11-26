@@ -1,0 +1,30 @@
+{
+  "layers": [
+    {
+      "file": "./assets/parallax_backgrounds/wp4/layer00.png",
+      "crop": true,
+      "depth": 0.019
+    },
+    {
+      "file": "./assets/parallax_backgrounds/wp4/layer01.png",
+      "crop": true,
+      "depth": 0.325
+    },
+    {
+      "file": "./assets/parallax_backgrounds/wp4/layer02.png",
+      "crop": true,
+      "depth": 0.477
+    },
+    {
+      "file": "./assets/parallax_backgrounds/wp4/layer03.png",
+      "crop": true,
+      "depth": 0.69
+    },
+    {
+      "file": "./assets/parallax_backgrounds/wp4/layer04.png",
+      "crop": true,
+      "depth": 0.903
+    }
+  ],
+  "strength": 20
+}

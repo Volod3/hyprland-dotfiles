@@ -1,0 +1,26 @@
+/* ===== Тема «Азур» — синьо-голуба палітра зі шпалер bg_parallax_TEST_3 ===== */
+@define-color rosewater #d6ecff;
+@define-color flamingo #b8d9f0;
+@define-color pink #89c8ff;
+@define-color mauve #7fdcff;
+@define-color red #ff7096;
+@define-color maroon #e3809b;
+@define-color peach #9fc6ff;
+@define-color yellow #ffe9a8;
+@define-color green #7ee0c0;
+@define-color teal #6fe0e8;
+@define-color sky #67c7ff;
+@define-color sapphire #4a9dff;
+@define-color blue #4a8dff;
+@define-color lavender #a9d8ff;
+
+@define-color base alpha(#000000, 0.12);
+@define-color surface alpha(#0b1020, 0.62);
+@define-color card alpha(#131829, 0.88);
+@define-color text #d6ecff;
+@define-color subtext #8aa6c8;
+@define-color hoverBg alpha(@mauve, 1);
+@define-color hoverFg #06101f;
+@define-color activeBg alpha(@mauve, 1);
+@define-color activeFg #06101f;
+@define-color shadow alpha(@lavender, 0.28);

@@ -1,0 +1,286 @@
+# archglass (космос) — заставка завантаження. Згенеровано cosmic_build.py, не редагуй вручну.
+# Plymouth малює ~50 кадрів/с; час = номер кадру / 50. Жодного масштабування на льоту — лише рух і прозорість.
+
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+global.W = Window.GetWidth();
+global.H = Window.GetHeight();
+global.CX = Window.GetX() + global.W / 2;
+global.CY = Window.GetY() + global.H / 2;
+global.frame = 0;
+
+fun cl(x) { if (x < 0) return 0; if (x > 1) return 1; return x; }
+fun eo(x) { x = cl(x); y = 1 - x; return 1 - y * y * y; }
+fun eio(x) { x = cl(x); if (x < 0.5) return 4 * x * x * x; y = 2 - 2 * x; return 1 - y * y * y / 2; }
+fun fmod(x, m) { return x - Math.Int(x / m) * m; }
+fun two(i) { if (i < 10) return "0" + i; return "" + i; }
+
+fun place(spr, img, cx, cy) {
+    spr.SetImage(img);
+    spr.SetX(cx - img.GetWidth() / 2);
+    spr.SetY(cy - img.GetHeight() / 2);
+}
+
+# ── картинки ──
+for (i = 0; i <= 40; i++) {
+    global.isb[i] = Image("sb_" + two(i) + ".png");
+    global.isg[i] = Image("sg_" + two(i) + ".png");
+}
+for (i = 0; i < 20; i++) global.ishine[i] = Image("shine_" + two(i) + ".png");
+global.i_text = Image("splash_text.png");
+global.i_glow = Image("glow.png");
+global.i_ring = Image("ring_blue.png");
+global.i_title = Image("title.png");
+global.i_neb_a = Image("nebula_a.png");
+global.i_neb_b = Image("nebula_b.png");
+global.i_orb_b = Image("orbit_back.png");
+global.i_orb_f = Image("orbit_front.png");
+global.i_comet = Image("comet.png");
+
+# ── спрайти; z: зорі 1, туманності 2, сяйво 3, кільце 4, орбіта-зад 5, супутник-зад 6, значок 10-11, орбіта-перед 12, супутник-перед 13, текст 14 ──
+st[0].a = 4.0176; st[0].r0 = 28.8; st[0].s = 0.839; st[0].b = 0.650; st[0].ph = 4.625; st[0].img = "star_p2";
+st[1].a = 5.6057; st[1].r0 = 100.0; st[1].s = 0.993; st[1].b = 0.563; st[1].ph = 1.373; st[1].img = "star_b1";
+st[2].a = 0.1667; st[2].r0 = 228.7; st[2].s = 1.232; st[2].b = 0.795; st[2].ph = 1.384; st[2].img = "star_b1";
+st[3].a = 5.0858; st[3].r0 = 7.5; st[3].s = 1.396; st[3].b = 0.864; st[3].ph = 2.137; st[3].img = "star_w0";
+st[4].a = 6.0143; st[4].r0 = 387.1; st[4].s = 0.647; st[4].b = 0.594; st[4].ph = 5.322; st[4].img = "star_b1";
+st[5].a = 5.0713; st[5].r0 = 839.2; st[5].s = 1.113; st[5].b = 0.988; st[5].ph = 2.377; st[5].img = "star_b1";
+st[6].a = 5.2113; st[6].r0 = 711.3; st[6].s = 1.455; st[6].b = 0.810; st[6].ph = 4.425; st[6].img = "star_w2";
+st[7].a = 1.4319; st[7].r0 = 332.8; st[7].s = 0.634; st[7].b = 0.655; st[7].ph = 0.634; st[7].img = "star_w1";
+st[8].a = 3.9941; st[8].r0 = 419.6; st[8].s = 0.939; st[8].b = 0.644; st[8].ph = 1.677; st[8].img = "star_p2";
+st[9].a = 0.4486; st[9].r0 = 730.2; st[9].s = 1.111; st[9].b = 0.660; st[9].ph = 2.903; st[9].img = "star_w2";
+st[10].a = 4.3238; st[10].r0 = 252.6; st[10].s = 0.890; st[10].b = 0.896; st[10].ph = 0.351; st[10].img = "star_w1";
+st[11].a = 2.5206; st[11].r0 = 76.1; st[11].s = 1.509; st[11].b = 0.805; st[11].ph = 4.509; st[11].img = "star_w2";
+st[12].a = 3.1368; st[12].r0 = 1017.4; st[12].s = 1.225; st[12].b = 0.614; st[12].ph = 0.877; st[12].img = "star_p1";
+st[13].a = 3.3865; st[13].r0 = 859.1; st[13].s = 1.000; st[13].b = 0.813; st[13].ph = 2.273; st[13].img = "star_w1";
+st[14].a = 3.1009; st[14].r0 = 869.1; st[14].s = 1.454; st[14].b = 0.619; st[14].ph = 1.005; st[14].img = "star_p1";
+st[15].a = 3.7473; st[15].r0 = 442.5; st[15].s = 1.176; st[15].b = 0.761; st[15].ph = 1.579; st[15].img = "star_b0";
+st[16].a = 4.2743; st[16].r0 = 131.7; st[16].s = 1.479; st[16].b = 0.888; st[16].ph = 4.827; st[16].img = "star_w0";
+st[17].a = 1.8441; st[17].r0 = 181.9; st[17].s = 0.553; st[17].b = 0.875; st[17].ph = 4.520; st[17].img = "star_b0";
+st[18].a = 3.1899; st[18].r0 = 122.4; st[18].s = 1.207; st[18].b = 0.929; st[18].ph = 3.188; st[18].img = "star_w0";
+st[19].a = 2.3494; st[19].r0 = 185.8; st[19].s = 1.551; st[19].b = 0.965; st[19].ph = 5.768; st[19].img = "star_b1";
+st[20].a = 3.0700; st[20].r0 = 128.6; st[20].s = 0.931; st[20].b = 0.993; st[20].ph = 5.067; st[20].img = "star_w0";
+st[21].a = 1.5134; st[21].r0 = 652.5; st[21].s = 0.633; st[21].b = 0.879; st[21].ph = 5.125; st[21].img = "star_b0";
+st[22].a = 0.8067; st[22].r0 = 546.6; st[22].s = 1.127; st[22].b = 0.669; st[22].ph = 5.479; st[22].img = "star_w0";
+st[23].a = 5.8365; st[23].r0 = 868.6; st[23].s = 1.274; st[23].b = 0.871; st[23].ph = 2.506; st[23].img = "star_p2";
+st[24].a = 2.3463; st[24].r0 = 1034.6; st[24].s = 1.024; st[24].b = 0.662; st[24].ph = 0.402; st[24].img = "star_w1";
+st[25].a = 3.4804; st[25].r0 = 676.7; st[25].s = 0.558; st[25].b = 0.869; st[25].ph = 0.370; st[25].img = "star_w0";
+st[26].a = 5.4012; st[26].r0 = 81.5; st[26].s = 0.800; st[26].b = 0.851; st[26].ph = 1.345; st[26].img = "star_w2";
+st[27].a = 5.8780; st[27].r0 = 656.7; st[27].s = 1.046; st[27].b = 0.903; st[27].ph = 5.071; st[27].img = "star_w0";
+st[28].a = 0.6090; st[28].r0 = 495.7; st[28].s = 0.995; st[28].b = 0.760; st[28].ph = 4.579; st[28].img = "star_p2";
+st[29].a = 6.1837; st[29].r0 = 113.2; st[29].s = 0.973; st[29].b = 0.703; st[29].ph = 5.411; st[29].img = "star_w0";
+st[30].a = 1.1951; st[30].r0 = 515.9; st[30].s = 0.993; st[30].b = 0.675; st[30].ph = 1.569; st[30].img = "star_w1";
+st[31].a = 5.0770; st[31].r0 = 984.4; st[31].s = 0.653; st[31].b = 0.843; st[31].ph = 3.395; st[31].img = "star_w0";
+st[32].a = 5.8205; st[32].r0 = 976.0; st[32].s = 0.725; st[32].b = 0.769; st[32].ph = 1.342; st[32].img = "star_w0";
+st[33].a = 1.0344; st[33].r0 = 2.5; st[33].s = 0.960; st[33].b = 0.967; st[33].ph = 4.931; st[33].img = "star_w1";
+st[34].a = 4.3768; st[34].r0 = 840.1; st[34].s = 1.373; st[34].b = 0.848; st[34].ph = 3.056; st[34].img = "star_w1";
+st[35].a = 1.3679; st[35].r0 = 67.3; st[35].s = 1.323; st[35].b = 0.577; st[35].ph = 1.969; st[35].img = "star_w1";
+st[36].a = 2.9958; st[36].r0 = 1057.3; st[36].s = 1.108; st[36].b = 0.576; st[36].ph = 3.189; st[36].img = "star_w0";
+st[37].a = 3.7387; st[37].r0 = 776.5; st[37].s = 0.797; st[37].b = 0.604; st[37].ph = 5.591; st[37].img = "star_w1";
+st[38].a = 3.7355; st[38].r0 = 712.3; st[38].s = 0.990; st[38].b = 0.813; st[38].ph = 3.283; st[38].img = "star_w0";
+st[39].a = 4.2080; st[39].r0 = 361.3; st[39].s = 0.829; st[39].b = 0.609; st[39].ph = 4.054; st[39].img = "star_w1";
+st[40].a = 5.8372; st[40].r0 = 1076.1; st[40].s = 0.560; st[40].b = 0.830; st[40].ph = 3.536; st[40].img = "star_w0";
+st[41].a = 3.3781; st[41].r0 = 581.8; st[41].s = 0.689; st[41].b = 0.707; st[41].ph = 0.432; st[41].img = "star_w1";
+st[42].a = 1.7906; st[42].r0 = 503.9; st[42].s = 1.120; st[42].b = 0.686; st[42].ph = 6.179; st[42].img = "star_p1";
+st[43].a = 0.0492; st[43].r0 = 939.7; st[43].s = 0.864; st[43].b = 0.849; st[43].ph = 5.896; st[43].img = "star_w1";
+st[44].a = 0.7253; st[44].r0 = 123.1; st[44].s = 1.131; st[44].b = 0.673; st[44].ph = 3.798; st[44].img = "star_p1";
+st[45].a = 1.2792; st[45].r0 = 729.4; st[45].s = 0.827; st[45].b = 0.770; st[45].ph = 5.686; st[45].img = "star_w0";
+st[46].a = 3.9853; st[46].r0 = 953.8; st[46].s = 0.596; st[46].b = 0.700; st[46].ph = 0.822; st[46].img = "star_w0";
+st[47].a = 4.6573; st[47].r0 = 634.4; st[47].s = 0.999; st[47].b = 0.554; st[47].ph = 0.473; st[47].img = "star_p0";
+st[48].a = 3.4280; st[48].r0 = 959.8; st[48].s = 1.162; st[48].b = 0.617; st[48].ph = 0.800; st[48].img = "star_w1";
+st[49].a = 5.6485; st[49].r0 = 915.5; st[49].s = 1.454; st[49].b = 0.955; st[49].ph = 1.319; st[49].img = "star_w2";
+st[50].a = 0.6459; st[50].r0 = 897.1; st[50].s = 1.478; st[50].b = 0.733; st[50].ph = 3.898; st[50].img = "star_w0";
+st[51].a = 5.4325; st[51].r0 = 1122.6; st[51].s = 1.401; st[51].b = 0.947; st[51].ph = 0.156; st[51].img = "star_p1";
+st[52].a = 4.9159; st[52].r0 = 473.5; st[52].s = 1.253; st[52].b = 0.881; st[52].ph = 1.558; st[52].img = "star_w2";
+st[53].a = 0.6792; st[53].r0 = 1003.0; st[53].s = 1.452; st[53].b = 0.650; st[53].ph = 5.128; st[53].img = "star_w1";
+st[54].a = 1.9176; st[54].r0 = 914.6; st[54].s = 0.789; st[54].b = 0.561; st[54].ph = 1.213; st[54].img = "star_w1";
+st[55].a = 5.4309; st[55].r0 = 1111.9; st[55].s = 0.843; st[55].b = 0.839; st[55].ph = 2.510; st[55].img = "star_b1";
+st[56].a = 5.9014; st[56].r0 = 132.6; st[56].s = 1.569; st[56].b = 0.630; st[56].ph = 6.045; st[56].img = "star_w0";
+st[57].a = 0.6811; st[57].r0 = 499.7; st[57].s = 1.315; st[57].b = 0.691; st[57].ph = 3.807; st[57].img = "star_b0";
+st[58].a = 2.4203; st[58].r0 = 663.1; st[58].s = 0.817; st[58].b = 0.869; st[58].ph = 0.011; st[58].img = "star_b2";
+st[59].a = 4.5203; st[59].r0 = 853.2; st[59].s = 1.254; st[59].b = 0.714; st[59].ph = 0.439; st[59].img = "star_p1";
+st[60].a = 3.9154; st[60].r0 = 762.9; st[60].s = 0.681; st[60].b = 0.955; st[60].ph = 3.185; st[60].img = "star_p1";
+st[61].a = 2.0495; st[61].r0 = 801.8; st[61].s = 1.132; st[61].b = 0.636; st[61].ph = 4.176; st[61].img = "star_w2";
+st[62].a = 4.7007; st[62].r0 = 200.1; st[62].s = 1.148; st[62].b = 0.733; st[62].ph = 5.236; st[62].img = "star_w1";
+st[63].a = 1.3206; st[63].r0 = 903.6; st[63].s = 1.187; st[63].b = 0.695; st[63].ph = 2.774; st[63].img = "star_p0";
+st[64].a = 3.2118; st[64].r0 = 912.8; st[64].s = 1.558; st[64].b = 0.881; st[64].ph = 4.138; st[64].img = "star_w1";
+st[65].a = 4.1711; st[65].r0 = 712.1; st[65].s = 0.648; st[65].b = 0.978; st[65].ph = 1.475; st[65].img = "star_w0";
+st[66].a = 5.0678; st[66].r0 = 169.5; st[66].s = 0.599; st[66].b = 0.993; st[66].ph = 3.839; st[66].img = "star_w1";
+st[67].a = 2.6040; st[67].r0 = 724.2; st[67].s = 0.754; st[67].b = 0.863; st[67].ph = 3.105; st[67].img = "star_w0";
+st[68].a = 4.1221; st[68].r0 = 6.4; st[68].s = 1.339; st[68].b = 0.897; st[68].ph = 0.669; st[68].img = "star_w0";
+st[69].a = 1.1051; st[69].r0 = 1101.7; st[69].s = 1.094; st[69].b = 0.573; st[69].ph = 1.565; st[69].img = "star_w1";
+st[70].a = 0.8378; st[70].r0 = 534.3; st[70].s = 1.108; st[70].b = 0.802; st[70].ph = 1.993; st[70].img = "star_w1";
+st[71].a = 5.1208; st[71].r0 = 1025.8; st[71].s = 0.998; st[71].b = 0.958; st[71].ph = 2.800; st[71].img = "star_w2";
+st[72].a = 5.4129; st[72].r0 = 517.6; st[72].s = 1.339; st[72].b = 0.928; st[72].ph = 1.742; st[72].img = "star_b1";
+st[73].a = 3.9380; st[73].r0 = 315.8; st[73].s = 0.631; st[73].b = 0.679; st[73].ph = 1.706; st[73].img = "star_w1";
+st[74].a = 0.5063; st[74].r0 = 173.5; st[74].s = 0.952; st[74].b = 0.619; st[74].ph = 1.344; st[74].img = "star_w1";
+st[75].a = 2.0790; st[75].r0 = 535.8; st[75].s = 0.615; st[75].b = 0.925; st[75].ph = 2.446; st[75].img = "star_b2";
+st[76].a = 0.1227; st[76].r0 = 1012.8; st[76].s = 1.154; st[76].b = 0.765; st[76].ph = 5.920; st[76].img = "star_w1";
+st[77].a = 5.3624; st[77].r0 = 1096.4; st[77].s = 0.990; st[77].b = 0.886; st[77].ph = 3.430; st[77].img = "star_b0";
+st[78].a = 3.0676; st[78].r0 = 313.9; st[78].s = 1.060; st[78].b = 0.725; st[78].ph = 4.201; st[78].img = "star_w2";
+st[79].a = 1.0370; st[79].r0 = 537.5; st[79].s = 0.684; st[79].b = 0.830; st[79].ph = 0.169; st[79].img = "star_w1";
+st[80].a = 3.5462; st[80].r0 = 31.2; st[80].s = 1.225; st[80].b = 0.611; st[80].ph = 2.899; st[80].img = "star_w1";
+st[81].a = 2.3820; st[81].r0 = 243.4; st[81].s = 0.893; st[81].b = 0.893; st[81].ph = 2.381; st[81].img = "star_w1";
+st[82].a = 5.2459; st[82].r0 = 540.9; st[82].s = 1.336; st[82].b = 0.573; st[82].ph = 5.978; st[82].img = "star_w2";
+st[83].a = 0.4311; st[83].r0 = 1100.9; st[83].s = 0.592; st[83].b = 0.564; st[83].ph = 1.553; st[83].img = "star_w1";
+st[84].a = 0.9574; st[84].r0 = 145.2; st[84].s = 1.253; st[84].b = 0.804; st[84].ph = 1.369; st[84].img = "star_p1";
+st[85].a = 4.8186; st[85].r0 = 193.0; st[85].s = 1.188; st[85].b = 0.887; st[85].ph = 0.719; st[85].img = "star_w1";
+st[86].a = 0.6792; st[86].r0 = 29.5; st[86].s = 0.878; st[86].b = 0.855; st[86].ph = 6.017; st[86].img = "star_w2";
+st[87].a = 1.2461; st[87].r0 = 680.9; st[87].s = 1.422; st[87].b = 0.659; st[87].ph = 4.378; st[87].img = "star_w2";
+st[88].a = 3.7725; st[88].r0 = 139.2; st[88].s = 1.583; st[88].b = 0.902; st[88].ph = 2.180; st[88].img = "star_w2";
+st[89].a = 2.3284; st[89].r0 = 581.9; st[89].s = 0.908; st[89].b = 0.932; st[89].ph = 5.164; st[89].img = "star_w1";
+st[90].a = 6.0368; st[90].r0 = 730.9; st[90].s = 1.420; st[90].b = 0.868; st[90].ph = 2.735; st[90].img = "star_p1";
+st[91].a = 6.0663; st[91].r0 = 310.6; st[91].s = 1.399; st[91].b = 0.792; st[91].ph = 3.036; st[91].img = "star_w2";
+st[92].a = 3.7226; st[92].r0 = 370.7; st[92].s = 0.808; st[92].b = 0.971; st[92].ph = 1.752; st[92].img = "star_w0";
+st[93].a = 4.7154; st[93].r0 = 655.3; st[93].s = 1.252; st[93].b = 0.701; st[93].ph = 3.104; st[93].img = "star_w0";
+st[94].a = 3.0634; st[94].r0 = 408.0; st[94].s = 0.821; st[94].b = 0.676; st[94].ph = 3.744; st[94].img = "star_w1";
+st[95].a = 0.0638; st[95].r0 = 1090.3; st[95].s = 0.640; st[95].b = 0.874; st[95].ph = 3.068; st[95].img = "star_w2";
+global.NST = 96;
+for (i = 0; i < global.NST; i++) {
+    global.star[i] = st[i];
+    global.star[i].sp = Sprite(Image(st[i].img + ".png"));
+    global.star[i].sp.SetZ(1);
+    global.star[i].sp.SetOpacity(0);
+    global.star[i].h = global.star[i].sp.GetImage().GetWidth() / 2;
+}
+global.neb_a = Sprite(global.i_neb_a); global.neb_a.SetZ(2); global.neb_a.SetOpacity(0);
+global.neb_b = Sprite(global.i_neb_b); global.neb_b.SetZ(2); global.neb_b.SetOpacity(0);
+global.glow = Sprite(global.i_glow); global.glow.SetZ(3); global.glow.SetOpacity(0);
+global.ring = Sprite(); global.ring.SetZ(4); global.ring.SetOpacity(0);
+global.ring_ready = 0;
+global.orb_b = Sprite(global.i_orb_b); global.orb_b.SetZ(5); global.orb_b.SetOpacity(0);
+global.orb_f = Sprite(global.i_orb_f); global.orb_f.SetZ(12); global.orb_f.SetOpacity(0);
+sa[0].ph = 0.0000; sa[0].w = 0.850; sa[0].img = "dot_w2";
+sa[1].ph = 2.8274; sa[1].w = 0.850; sa[1].img = "dot_p2";
+for (i = 0; i < 2; i++) {
+    global.sat[i] = sa[i];
+    global.sat[i].sp = Sprite(Image(sa[i].img + ".png"));
+    global.sat[i].sp.SetOpacity(0);
+}
+global.blue = Sprite(); global.blue.SetZ(10);
+global.grad = Sprite(); global.grad.SetZ(11);
+global.text = Sprite(global.i_text); global.text.SetZ(14);
+global.title = Sprite(global.i_title); global.title.SetZ(14); global.title.SetOpacity(0);
+global.comet = Sprite(global.i_comet); global.comet.SetZ(2); global.comet.SetOpacity(0);
+global.status = Sprite(); global.status.SetZ(14); global.status.SetOpacity(0);
+global.status_text = "";
+
+fun refresh() {
+    t = global.frame / 50;
+    global.frame++;
+
+    # значок: у центр і росте (готові кадри)
+    pp = eio((t - 0.30) / 0.85);
+    k = Math.Int(pp * 40 + 0.5);
+    icx = -195.00 * (1 - pp);
+    icy = -60 * pp;
+    x = global.CX + icx;
+    y = global.CY + icy;
+    go = eio((t - 0.9) / 0.5);
+    place(global.blue, global.isb[k], x, y);
+    if (pp >= 1 && t >= 1.75 && t < 2.35) {
+        place(global.grad, global.ishine[Math.Int(cl((t - 1.75) / 0.6) * 19.999)], x, y);
+    } else {
+        place(global.grad, global.isg[k], x, y);
+    }
+    global.grad.SetOpacity(go);
+    if (go >= 1) global.blue.SetOpacity(0); else global.blue.SetOpacity(1);
+
+    # напис прошивки тане
+    global.text.SetX(global.CX - 283.0 + 60 * eo((t - 0.30) / 0.6));
+    global.text.SetY(global.CY - 83.5);
+    global.text.SetOpacity(1 - eo((t - 0.30) / 0.45));
+
+    # зорі: проліт → дрейф
+    D = 820 * eo((t - 0.25) / 1.6) + 14 * t;
+    fi = eo((t - 0.2) / 0.6);
+    for (i = 0; i < global.NST; i++) {
+        q = global.star[i];
+        r = 40 + fmod(q.r0 + D * q.s, 1150);
+        q.sp.SetX(global.CX + Math.Cos(q.a) * r - q.h);
+        q.sp.SetY(global.CY + Math.Sin(q.a) * r * 0.9 - q.h);
+        q.sp.SetOpacity(cl((r - 40) / 160) * q.b * fi * (0.75 + 0.25 * Math.Sin(q.ph + 3 * t)));
+    }
+
+    # туманності
+    nb = eo((t - 0.9) / 1.2) * (0.85 + 0.15 * Math.Sin(t / 3));
+    global.neb_a.SetX(global.CX - 430 + 40 * Math.Sin(t / 7) - 550);  global.neb_a.SetY(global.CY - 190 - 320);
+    global.neb_b.SetX(global.CX + 400 + 30 * Math.Sin(t / 9 + 1) - 500); global.neb_b.SetY(global.CY + 190 - 300);
+    global.neb_a.SetOpacity(nb); global.neb_b.SetOpacity(nb * 0.9);
+
+    # сяйво
+    g = 0.55 * eo((t - 1.0) / 0.9);
+    if (t > 2) g = g * (0.85 + 0.15 * Math.Sin(2 * Math.Pi * (t - 2) / 2.8));
+    place(global.glow, global.i_glow, x, y);
+    global.glow.SetOpacity(g);
+
+    # хвиля (масштаб лише раз на кадр, поки йде хвиля)
+    u = (t - 1.55) / 1.4;
+    if (u >= 0 && u <= 1) {
+        d = (260 + 760 * eo(u)) / 0.8;
+        place(global.ring, global.i_ring.Scale(d, d), x, y);
+        global.ring.SetOpacity(0.6 * (1 - u) * (1 - u));
+    } else global.ring.SetOpacity(0);
+
+    # орбіта й супутники
+    oo = eo((t - 1.3) / 0.8);
+    place(global.orb_b, global.i_orb_b, x, y + 10);
+    place(global.orb_f, global.i_orb_f, x, y + 10);
+    global.orb_b.SetOpacity(oo);
+    global.orb_f.SetOpacity(oo);
+    for (i = 0; i < 2; i++) {
+        q = global.sat[i];
+        th = q.w * t + q.ph;
+        sn = Math.Sin(th);
+        q.sp.SetX(x + 418.0 * Math.Cos(th) - 12);
+        q.sp.SetY(y + 10 + 113.0 * sn - 12);
+        if (sn >= 0) { q.sp.SetZ(13); q.sp.SetOpacity(oo); } else { q.sp.SetZ(6); q.sp.SetOpacity(oo * 0.55); }
+    }
+
+    # комета
+    if (t > 2.6) {
+        cu = fmod(t - 2.6, 6.5) / 1.1;
+        if (cu <= 1) {
+            global.comet.SetX(global.CX - 900 + 1500 * cu - 180);
+            global.comet.SetY(global.CY - 480 + 450 * cu - 60);
+            global.comet.SetOpacity(Math.Sin(Math.Pi * cu));
+        } else global.comet.SetOpacity(0);
+    }
+
+    # напис і рядок статусу
+    e = eo((t - 2.2) / 0.8);
+    global.title.SetX(global.CX - 202.0);
+    global.title.SetY(global.CY + 168 + 22 * (1 - e) - 45.0);
+    global.title.SetOpacity(e);
+    global.status.SetOpacity(eo((t - 2.6) / 0.6) * 0.75);
+}
+Plymouth.SetRefreshFunction(refresh);
+
+# ── назви служб, що стартують (systemd) — дрібно внизу, «система вантажиться» ──
+fun status_cb(text) {
+    s = text;
+    global.status.SetImage(Image.Text("›  " + s, 0.55, 0.78, 1.0, 1, "Monospace 11"));
+    global.status.SetX(global.CX - global.status.GetImage().GetWidth() / 2);
+    global.status.SetY(global.H - 70);
+}
+Plymouth.SetUpdateStatusFunction(status_cb);
+
+# ── повідомлення про помилки — рожевим, вище ──
+global.msg = Sprite(); global.msg.SetZ(20);
+fun message(text) {
+    global.msg.SetImage(Image.Text(text, 0.95, 0.72, 0.83, 1, "Sans 13"));
+    global.msg.SetPosition(global.CX - global.msg.GetImage().GetWidth() / 2, global.H - 110, 20);
+}
+Plymouth.SetMessageFunction(message);
+
+# ── пароль (на випадок шифрування диска) ──
+global.pw = Sprite(); global.pw.SetZ(20);
+fun password(prompt, bullets) {
+    s = prompt + "  ";
+    for (i = 0; i < bullets; i++) s = s + "●";
+    global.pw.SetImage(Image.Text(s, 0.91, 0.93, 0.96, 1, "Sans 16"));
+    global.pw.SetPosition(global.CX - global.pw.GetImage().GetWidth() / 2, global.CY + 230, 20);
+    global.pw.SetOpacity(1);
+}
+fun normal() { global.pw.SetOpacity(0); }
+Plymouth.SetDisplayPasswordFunction(password);
+Plymouth.SetDisplayNormalFunction(normal);

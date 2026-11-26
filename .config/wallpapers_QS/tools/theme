@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""theme — теми робочого столу (шпалери-паралакс + кольори всього інтерфейсу).
+
+  theme list            JSON: усі теми (назва, мініатюра, палітра, яка поточна)
+  theme current         id поточної теми
+  theme set <id>        застосувати: шпалери, кольори waybar / сповіщень / бокової панелі / вікон Quickshell /
+                        kitty / рамок вікон Hyprland. Waybar і вікна Quickshell перефарбовуються наживо.
+  theme next | prev     наступна / попередня
+
+Теми: ~/.config/wallpapers_QS/themes/themes.json. Поточна (для QML): themes/current.json.
+Шпалери: bg_parallax_MDRG/settings.json генерується з settings.base.jsonc (спільне: годинник, плеєр, віджети)
+         + шари теми (assets/parallax_backgrounds/<тема>/layers.json).
+Меню з анімаціями — Pause/Break (bg_themes), а також Win+I → «Теми».
+"""
+import json, os, re, subprocess, sys
+
+HOME = os.path.expanduser("~")
+QS = os.path.join(HOME, ".config/wallpapers_QS")
+TD = os.path.join(QS, "themes")
+PX = os.path.join(QS, "bg_parallax_MDRG")
+PB = os.path.join(PX, "assets/parallax_backgrounds")
+
+
+def themes():
+    return json.load(open(os.path.join(TD, "themes.json")))["themes"]
+
+
+def current_id():
+    try:
+        return json.load(open(os.path.join(TD, "current.json")))["id"]
+    except (OSError, ValueError, KeyError):
+        return "sky"
+
+
+def write(path, text):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def hex2rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def run(cmd, timeout=6):
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def apply_wallpaper(t):
+    lj = json.load(open(os.path.join(PB, t["wallpaper"], "layers.json")))
+    layers = lj["layers"]
+    for l in layers:                     # шляхи відносно shell.qml — завжди з теки теми (генератор інколи пише зайвий префікс)
+        l["file"] = "./assets/parallax_backgrounds/%s/%s" % (t["wallpaper"], os.path.basename(l["file"]))
+    base = open(os.path.join(PX, "settings.base.jsonc")).read()
+    out = (base.replace("__LAYERS__", json.dumps(layers, ensure_ascii=False, indent=2).replace("\n", "\n    "))
+               .replace("__STRENGTH__", str(t.get("strength", 20)))
+               .replace("__VIZ_TOP__", t["viz"][0]).replace("__VIZ_BOTTOM__", t["viz"][1])
+               .replace("__VIZ_LAYER__", str(t.get("vizLayer", 0))).replace("__CLOCK_LAYER__", str(t.get("clockLayer", 0))))
+    # своє оформлення візуалізатора / годинника теми — поверх спільних налаштувань
+    over = {k: t[k] for k in ("visualizer", "clock") if isinstance(t.get(k), dict)}
+    if over:
+        cfg = json.loads(strip_jsonc(out))
+        for k, v in over.items():
+            deep_merge(cfg.setdefault(k, {}), v)
+        out = ("// Згенеровано tools/theme з settings.base.jsonc + тема «%s». Правити треба settings.base.jsonc / themes.json.\n" % t["name"]
+               + json.dumps(cfg, ensure_ascii=False, indent=2))
+    write(os.path.join(PX, "settings.json"), out)
+
+
+def strip_jsonc(s):
+    """JSONC → JSON: прибрати коментарі (поза рядками) і коми перед } / ]."""
+    out, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == '"':
+            j = i + 1
+            while j < n and s[j] != '"':
+                j += 2 if s[j] == "\\" else 1
+            out.append(s[i:j + 1]); i = j + 1
+        elif s.startswith("//", i):
+            while i < n and s[i] != "\n":
+                i += 1
+        elif s.startswith("/*", i):
+            e = s.find("*/", i + 2); i = n if e < 0 else e + 2
+        else:
+            out.append(c); i += 1
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+
+
+def deep_merge(a, b):
+    for k, v in b.items():
+        if isinstance(v, dict) and isinstance(a.get(k), dict):
+            deep_merge(a[k], v)
+        else:
+            a[k] = v
+
+
+def apply_waybar(p):
+    css = """/* Згенеровано tools/theme — кольори поточної теми. Не редагуй вручну. */
+@define-color accent %(accent)s;
+@define-color softpink %(accent2)s;
+@define-color surface alpha(%(bg)s, 0.76);
+@define-color popup alpha(%(bg)s, 0.94);
+@define-color text %(text)s;
+@define-color hoverBg @accent;
+@define-color hoverFg %(onAccent)s;
+@define-color activeBg @accent;
+@define-color activeFg %(onAccent)s;
+@define-color shadow alpha(@accent, 0.2);
+""" % p
+    write(os.path.join(HOME, ".config/waybar/theme-colors.css"), css)
+    # waybar з reload_style_on_change підхоплює сам; про всяк випадок — сигнал перечитати стиль
+    run(["pkill", "-SIGUSR2", "-x", "waybar"])
+
+
+def apply_swaync(p):
+    css = """/* Згенеровано tools/theme — кольори поточної теми. */
+@define-color accent  %(accent)s;
+@define-color pink    %(accent2)s;
+@define-color surface alpha(%(bg)s, 0.90);
+@define-color card    alpha(mix(%(bg)s, #ffffff, 0.06), 0.94);
+@define-color text    %(text)s;
+@define-color subtext %(sub)s;
+@define-color hoverBg alpha(@accent, 0.22);
+@define-color hoverFg @text;
+@define-color shadow  alpha(black, 0.35);
+@define-color danger  %(warn)s;
+@define-color border  alpha(%(border)s, 0.16);
+""" % p
+    write(os.path.join(HOME, ".config/swaync/theme-colors.css"), css)
+    run(["swaync-client", "-rs"])
+
+
+def apply_sidepanel(p):
+    f = os.path.join(QS, "bg_sidepanel/sidepanel.json")
+    s = open(f).read()
+    for key, val in (("background", p["bg"]), ("accent", p["accent"]), ("accent2", p["accent2"]), ("onAccent", p["onAccent"]),
+                     ("text", p["text"]), ("tile", p["border"]), ("border", p["border"])):
+        s = re.sub(r'("%s":\s*)"#[0-9a-fA-F]{6}"' % key, r'\g<1>"%s"' % val, s, count=1)
+    write(f, s)
+
+
+def apply_kitty(t):
+    p = t["palette"]
+    conf = """# Згенеровано tools/theme — кольори поточної теми (підключено в kitty.conf через include)
+background             %s
+cursor                 %s
+selection_background   %s
+selection_foreground   %s
+url_color              %s
+active_border_color    %s
+color4                 %s
+color12                %s
+color5                 %s
+color13                %s
+""" % (t["term"], p["accent"], p["accent"], p["onAccent"], p["accent"], p["accent"], p["accent"], p["accent"], p["accent2"], p["accent2"])
+    write(os.path.join(HOME, ".config/kitty/theme-colors.conf"), conf)
+    # перечитати конфіг у всіх відкритих kitty
+    try:
+        pids = subprocess.run(["pgrep", "-x", "kitty"], capture_output=True, text=True).stdout.split()
+    except Exception:  # noqa: BLE001
+        pids = []
+    for pid in pids:
+        run(["kitten", "@", "--to", "unix:@kitty-" + pid, "action", "load_config_file"], timeout=3)
+
+
+def apply_hypr(t):
+    a, b = t["borders"]
+    ra, rb = "rgba(%sff)" % a.lstrip("#"), "rgba(%sff)" % b.lstrip("#")
+    dark = "rgba(%sff)" % t["palette"]["bg"].lstrip("#")
+    lua = """-- Згенеровано tools/theme — рамки вікон у кольорах теми (підключено в кінці hyprland.lua)
+hl.config({ general = { col = {
+    active_border = { colors = {"%s", "%s", "%s", "%s", "%s"}, angle = 0 },
+    inactive_border = "rgba(%s66)",
+} } })
+""" % (ra, rb, dark, dark, ra, a.lstrip("#"))
+    path = os.path.join(HOME, ".config/hypr/theme.lua")
+    write(path, lua)
+    run(["hyprctl", "eval", 'dofile("%s")' % path])
+
+
+def apply(tid):
+    t = next((x for x in themes() if x["id"] == tid), None)
+    if not t:
+        print("немає теми", tid, file=sys.stderr)
+        return 1
+    p = t["palette"]
+    # 1) поточна тема для вікон Quickshell (ThemeColors.qml стежить за файлом) + картинка шпалер (для блокування)
+    t = dict(t)
+    pv = os.path.join(PB, t["wallpaper"], "preview1080.png")
+    t["preview"] = pv if os.path.exists(pv) else os.path.join(PB, t["wallpaper"], "preview.png")
+    write(os.path.join(TD, "current.json"), json.dumps(t, ensure_ascii=False, indent=1))
+    apply_wallpaper(t)
+    apply_waybar(p)
+    apply_swaync(p)
+    apply_sidepanel(p)
+    apply_kitty(t)
+    apply_hypr(t)
+    return 0
+
+
+def cmd_list():
+    cur = current_id()
+    out = []
+    for t in themes():
+        d = dict(t)
+        d["thumb"] = os.path.join(PB, t["wallpaper"], "thumb.png")
+        pv = os.path.join(PB, t["wallpaper"], "preview1080.png")
+        d["preview"] = pv if os.path.exists(pv) else os.path.join(PB, t["wallpaper"], "preview.png")
+        d["current"] = t["id"] == cur
+        out.append(d)
+    print(json.dumps(out, ensure_ascii=False))
+
+
+def main():
+    a = sys.argv[1:] or ["current"]
+    if a[0] == "list":
+        cmd_list()
+    elif a[0] == "current":
+        print(current_id())
+    elif a[0] == "set" and len(a) > 1:
+        sys.exit(apply(a[1]))
+    elif a[0] in ("next", "prev"):
+        ids = [t["id"] for t in themes()]
+        i = ids.index(current_id()) if current_id() in ids else 0
+        sys.exit(apply(ids[(i + (1 if a[0] == "next" else -1)) % len(ids)]))
+    else:
+        print(__doc__)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""clipd — історія буфера обміну (як Klipper у KDE Plasma).
+
+  clipd watch            стежити за буфером (автозапуск із hyprland.lua)
+  clipd store            (викликає wl-paste --watch) зберегти поточний вміст
+  clipd list             історія у JSON (для вікна bg_clipboard)
+  clipd copy <id>        покласти запис назад у буфер
+  clipd pin <id>         закріпити / відкріпити
+  clipd delete <id>      видалити запис
+  clipd clear            очистити все, крім закріплених
+
+Паролі з менеджерів паролів (x-kde-passwordManagerHint) не зберігаються.
+Дані: ~/.local/share/clipboard/
+"""
+import fcntl
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.parse
+
+HOME = os.path.expanduser("~")
+DIR = os.path.join(HOME, ".local/share/clipboard")
+IMG = os.path.join(DIR, "img")
+DB = os.path.join(DIR, "history.json")
+LOCK = os.path.join(DIR, ".lock")
+MAX_ITEMS = 60            # незакріплених записів
+MAX_TEXT = 200_000        # байтів тексту на запис
+MAX_IMAGE = 12_000_000
+
+IMG_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg")
+IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif")
+
+
+def run(cmd, data=None, timeout=4):
+    try:
+        return subprocess.run(cmd, input=data, capture_output=True, timeout=timeout).stdout
+    except Exception:  # noqa: BLE001
+        return b""
+
+
+class Locked:
+    def __enter__(self):
+        os.makedirs(IMG, exist_ok=True)
+        self.f = open(LOCK, "w")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *a):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
+def load():
+    try:
+        with open(DB) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+
+def save(items):
+    tmp = DB + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(items, f, ensure_ascii=False)
+    os.replace(tmp, DB)
+
+
+def trim(items):
+    keep, n = [], 0
+    for it in items:
+        if it.get("pinned") or n < MAX_ITEMS:
+            keep.append(it)
+            if not it.get("pinned"):
+                n += 1
+        elif it.get("kind") == "image":
+            try:
+                os.remove(os.path.join(IMG, it["file"]))
+            except OSError:
+                pass
+    return keep
+
+
+def add(entry):
+    with Locked():
+        items = load()
+        old = next((i for i in items if i["id"] == entry["id"]), None)
+        if old:
+            items.remove(old)
+            entry["pinned"] = old.get("pinned", False)
+        items.insert(0, entry)
+        save(trim(items))
+
+
+def store():
+    types = run(["wl-paste", "--list-types"]).decode(errors="ignore").split()
+    if not types or any("passwordManagerHint" in t or t == "x-kde-passwordManagerHint" for t in types):
+        sys.stdin.buffer.read()
+        return
+    img_t = next((t for t in IMAGE_TYPES if t in types), None)
+    has_text = any(t.startswith("text/plain") or t in ("UTF8_STRING", "STRING", "TEXT") for t in types)
+    data = sys.stdin.buffer.read(MAX_TEXT + 1)
+    now = int(time.time())
+    if img_t and not has_text:
+        raw = run(["wl-paste", "--no-newline", "--type", img_t], timeout=6)
+        if not raw or len(raw) > MAX_IMAGE:
+            return
+        h = hashlib.sha1(raw).hexdigest()[:16]
+        ext = img_t.split("/")[1].replace("jpeg", "jpg")
+        name = f"{h}.{ext}"
+        path = os.path.join(IMG, name)
+        if not os.path.exists(path):
+            with open(path, "wb") as f:
+                f.write(raw)
+        add({"id": "i" + h, "kind": "image", "file": name, "mime": img_t, "size": len(raw), "time": now})
+        return
+    if not data or len(data) > MAX_TEXT:
+        return
+    text = data.decode(errors="replace")
+    if not text.strip():
+        return
+    h = hashlib.sha1(data).hexdigest()[:16]
+    add({"id": "t" + h, "kind": "text", "text": text, "time": now})
+
+
+def find(iid):
+    return next((i for i in load() if i["id"] == iid), None)
+
+
+def copy(iid):
+    it = find(iid)
+    if not it:
+        return
+    if it["kind"] == "image":
+        with open(os.path.join(IMG, it["file"]), "rb") as f:
+            raw = f.read()
+        subprocess.Popen(["wl-copy", "--type", it.get("mime", "image/png")], stdin=subprocess.PIPE,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True).communicate(raw)
+    else:
+        subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True).communicate(it["text"].encode())
+
+
+def modify(iid, fn):
+    with Locked():
+        items = load()
+        for it in list(items):
+            if it["id"] == iid:
+                fn(items, it)
+        save(items)
+
+
+def delete_entry(items, it):
+    items.remove(it)
+    if it.get("kind") == "image":
+        try:
+            os.remove(os.path.join(IMG, it["file"]))
+        except OSError:
+            pass
+
+
+def clear():
+    with Locked():
+        items = load()
+        for it in [i for i in items if not i.get("pinned")]:
+            delete_entry(items, it)
+        save(items)
+    run(["wl-copy", "--clear"])
+
+
+def listing():
+    out = []
+    for it in load():
+        e = dict(it)
+        if e["kind"] == "text":
+            e["preview"] = e["text"][:400]
+            t = e["text"].rstrip("\n")
+            e["preview"] = t[:400]
+            e["lines"] = t.count("\n") + 1
+            e["chars"] = len(t)
+            # скопійований файл-картинка (Dolphin, менеджери файлів) — показати мініатюру
+            one = t.strip()
+            if "\n" not in one:
+                path = urllib.parse.unquote(one[7:]) if one.startswith("file://") else one
+                if path.startswith("/") and path.lower().endswith(IMG_EXT) and os.path.isfile(path):
+                    e["thumb"] = path
+            del e["text"]
+        else:
+            e["path"] = os.path.join(IMG, e["file"])
+        out.append(e)
+    print(json.dumps(out, ensure_ascii=False))
+
+
+def watch():
+    os.makedirs(IMG, exist_ok=True)
+    me = os.path.realpath(__file__)
+    while True:
+        subprocess.run(["wl-paste", "--watch", me, "store"])
+        time.sleep(2)          # wl-paste впав (напр. перезапуск композитора) — знову
+
+
+def main():
+    a = sys.argv[1:] or ["list"]
+    cmd, arg = a[0], (a[1] if len(a) > 1 else "")
+    if cmd == "watch":
+        watch()
+    elif cmd == "store":
+        store()
+    elif cmd == "list":
+        listing()
+    elif cmd == "copy":
+        copy(arg)
+    elif cmd == "pin":
+        modify(arg, lambda items, it: it.__setitem__("pinned", not it.get("pinned")))
+    elif cmd == "delete":
+        modify(arg, delete_entry)
+    elif cmd == "clear":
+        clear()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=archglass
+Description=Логотип Arch → блакитно-рожевий градієнт, хвилі, частинки на орбітах (стиль робочого столу)
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/archglass
+ScriptFile=/usr/share/plymouth/themes/archglass/archglass.script

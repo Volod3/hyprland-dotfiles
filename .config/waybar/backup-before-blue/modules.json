@@ -1,0 +1,177 @@
+{
+  // Workspaces
+  "hyprland/workspaces": {
+    "on-click": "activate",
+    "active-only": false,
+    "all-outputs": true,
+    "format": "{icon}",
+    "format-icons": {
+      "urgent": "󱥁",
+      "default": "",
+
+    //  "1": "⠡", "2": "⠢", "3": "⠣", "4": "⠤", "5": "⠥",
+    //  "6": "⠦", "7": "⠧", "8": "⠨", "9": "⠩", "10": "⠪"
+
+    //  "1": "Ⅰ", "2": "Ⅱ", "3": "Ⅲ", "4": "Ⅳ", "5": "Ⅴ",
+    //  "6": "Ⅵ", "7": "Ⅶ", "8": "Ⅷ", "9": "Ⅸ", "10": "Ⅹ"
+
+    //  "1": "󰎤", "2": "󰎧", "3": "󰎪", "4": "󰎭", "5": "󰎱",
+    //  "6": "󰎳", "7": "󰎶", "8": "󰎹", "9": "󰎼", "10": "󰎡"
+
+    //  "1": "0001", "2": "0010", "3": "0011", "4": "0100", "5": "0101",
+    //  "6": "0110", "7": "0111", "8": "1000", "9": "1001", "10": "1010"
+
+    //  "1": "󰎥", "2": "󰎨", "3": "󰎫", "4": "󰎮", "5": "󰎲",
+    //  "6": "󰎴", "7": "󰎷", "8": "󰎺", "9": "󰎽", "10": "󰎢"
+
+    "1": "1", "2": "2", "3": "3", "4": "4", "5": "5",
+    "6": "6", "7": "7", "8": "8", "9": "9", "10": "10"
+    },
+    "persistent-workspaces": {
+      "*": 10
+    }
+  },
+
+  // Hyprland Window
+  "hyprland/window": {
+    "separate-outputs": true
+  },
+
+  // Мережа й Bluetooth — клік відкриває наші вікна (bg_popups)
+  "custom/network": {
+    "exec": "~/.config/waybar/netbt.sh net",
+    "return-type": "json",
+    "interval": 5,
+    "format": "{}",
+    "on-click": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle net",
+    "on-click-right": "nm-connection-editor"
+  },
+  "custom/bluetooth": {
+    "exec": "~/.config/waybar/netbt.sh bt",
+    "return-type": "json",
+    "interval": 5,
+    "format": "{}",
+    "on-click": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle bt",
+    "on-click-right": "blueman-manager"
+  },
+  "group/connect": {
+    "orientation": "horizontal",
+    "modules": ["custom/network", "custom/bluetooth"]
+  },
+
+  // Меню: бокова панель + пошук програм
+  "custom/appmenu": {
+      "format": "󰣇",
+      "tooltip-format": "ЛКМ: бокова панель і пошук програм\nСКМ: режим живлення\nПКМ: меню wofi",
+      "on-click": "qs -p ~/.config/wallpapers_QS/bg_sidepanel/shell.qml ipc call sidepanel toggle",
+      "on-click-middle": "~/.config/waybar/powerprofile.sh",
+      //"on-click-right": "~/.config/waybar/powermenu.sh",
+      "on-click-right": "wofi --show drun",
+      "tooltip": true
+  },
+  "custom/notification": {
+    "tooltip": false,
+    // "format": "{} {icon}",
+    "format": "{icon}",
+    "format-icons": {
+      "notification": "󱅫",
+      "none": "󰂚",
+      "dnd-notification": "󱅫",
+      "dnd-none": "󰂛",
+      "inhibited-notification": "",
+      "inhibited-none": "",
+      "dnd-inhibited-notification": "",
+      "dnd-inhibited-none": ""
+    },
+    "return-type": "json",
+    "exec-if": "command -v swaync-client",
+    "exec": "swaync-client -swb",
+    "on-click": "swaync-client -t -sw",
+    "on-click-right": "swaync-client -d -sw",
+    "escape": true
+  },
+
+  // Keyboard State
+  "keyboard-state": {
+    "numlock": true,
+    "capslock": true,
+    "format": "{name} {icon}",
+    "format-icons": {
+      "locked": "",
+      "unlocked": ""
+    }
+  },
+
+  // System tray
+  "tray": {
+    "icon-size": 18,
+    "spacing": 10,
+    "show-passive-items": true   // показувати й «пасивні» іконки (раніше частина ховалась)
+  },
+
+  // Clock
+  "clock": {
+    // "timezone": "America/New_York",
+    "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>",
+    "format": "󰥔 {0:%H:%M}",
+    "format-alt": "󰥔 {0:%H:%M}   {0:%d-%m-%Y}"
+  },
+
+  "hyprland/language": {
+    // великими літерами (US / UA) через Pango; format-<мова> у waybar 0.16 тут не спрацьовує
+    "format": "<span text_transform='uppercase'>{short}</span>",
+    "tooltip-format": "{long}",
+    "keyboard-name": "at-translated-set-2-keyboard"   // основна клавіатура ноутбука (hyprctl devices)
+  },
+
+  // Network
+  "network": {
+    "format": "{ifname}",
+    "format-wifi": "   {signalStrength}%  {bandwidthDownBytes}  {bandwidthUpBytes} ",
+    "format-ethernet": "    {bandwidthDownBytes}  {bandwidthUpBytes} ",
+    "format-disconnected": " 󰲛 ",
+    "tooltip-format": "   {ifname} via {gwaddri} ",
+    "tooltip-format-wifi": "    {essid} ({signalStrength}%) ",
+    "tooltip-format-ethernet": "   {ifname} ({ipaddr}/{cidr}) ",
+    "tooltip-format-disconnected": " Disconnected" ,
+    "max-length": 50,
+    "interval": 1,
+    "on-click": "nm-connection-editor"
+  },
+
+
+
+  // Bluetooth
+  "bluetooth": {
+      "format": " 󰂯 ",
+      "format-on": " 󰂯 On ",
+      "format-off": " 󰂱 Off ",
+      "format-disabled": " 󰂲 ",
+      "format-connected": " 󰂱 {device_alias} ",
+      "format-connected-battery": " 󰂱 {device_alias} {device_battery_percentage}% ",
+      "tooltip-format": " {controller_alias}\t{controller_address}\n\n{num_connections} підключено ",
+      "tooltip-format-connected": " {controller_alias}\t{controller_address}\n\n{num_connections} підключено:\n{device_enumerate} ",
+      "tooltip-format-enumerate-connected": " {device_alias}\t{device_address} ",
+      "tooltip-format-enumerate-connected-battery": " {device_alias}\t{device_address}\t{device_battery_percentage}% ",
+      "interval": 30,
+      "on-click": "blueman-manager"
+  },
+
+  // Other
+  "user": {
+    "format": "{user}",
+    "interval": 60,
+    "icon": false
+  },
+
+  // Idle Inhibator
+  "idle_inhibitor": {
+    "format": "{icon}",
+    "tooltip": true,
+    "format-icons": {
+      "activated": "",
+      "deactivated": ""
+    },
+    "on-click-right": "hyprlock"
+  }
+}

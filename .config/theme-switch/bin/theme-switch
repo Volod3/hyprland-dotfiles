@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# theme-switch — перемикання шпалер (Quickshell parallax) + палітри всього робочого столу
+#   theme-switch apply 1|2|madara|azure   застосувати тему
+#   theme-switch toggle                   перемкнути на іншу
+#   theme-switch current                  показати поточну
+#   theme-switch list                     список тем
+#   theme-switch menu                     меню wofi
+set -uo pipefail
+
+BASE="${XDG_CONFIG_HOME:-$HOME/.config}/theme-switch"
+STATE="$BASE/state/current"
+LOG="$BASE/logs/theme-switch.log"
+CFG="$HOME/.config"
+UID_="$(id -u)"
+export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin"
+
+mkdir -p "$BASE/state" "$BASE/logs"
+log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*" >>"$LOG"; }
+
+theme_dirs() { printf '%s\nthemes/1-madara\nthemes/2-azure\n' "$BASE" | tail -n +2; }
+
+resolve() {
+  local q; q="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "$q" in
+    1|madara|мадара|old|було)          echo "$BASE/themes/1-madara" ;;
+    2|azure|азур|test3|test_3|blue|син|голуб)  echo "$BASE/themes/2-azure" ;;
+    *) return 1 ;;
+  esac
+}
+
+current_id() {
+  if [ -f "$STATE" ]; then cat "$STATE"; else echo "madara"; fi
+}
+
+detect_sig() {
+  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+    printf '%s\n' "$HYPRLAND_INSTANCE_SIGNATURE"; return 0
+  fi
+  local d s
+  for d in /run/user/"$UID_"/hypr/*/; do
+    [ -S "$d/.socket.sock" ] || continue
+    s="$(basename "$d")"
+    if HYPRLAND_INSTANCE_SIGNATURE="$s" XDG_RUNTIME_DIR="/run/user/$UID_" \
+        hyprctl monitors >/dev/null 2>&1; then
+      printf '%s\n' "$s"; return 0
+    fi
+  done
+  return 1
+}
+
+replace_palette() { # <target.css> <head.css>
+  local target="$1" head="$2" body
+  [ -f "$target" ] || return 0
+  [ -f "$head" ] || return 0
+  body="$(mktemp)"
+  awk '/^\* \{/{f=1} f' "$target" > "$body"
+  { cat "$head"; echo; cat "$body"; } > "$target.new" && mv "$target.new" "$target"
+  rm -f "$body"
+}
+
+ensure_hypr_env() {
+  # qs/waybar дістають IPC Hyprland лише якщо ці змінні є в середовищі.
+  # Без них: паралакс стоїть (hyprctl cursorpos), а модулі waybar
+  # hyprland/* вимикаються («HYPRLAND_INSTANCE_SIGNATURE was not set»).
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID_}"
+  local sig wl
+  if sig="$(detect_sig)"; then export HYPRLAND_INSTANCE_SIGNATURE="$sig"; fi
+  if wl="$(detect_wayland)"; then export WAYLAND_DISPLAY="$wl"; fi
+  log "env: HYPR=${HYPRLAND_INSTANCE_SIGNATURE:-—} WAYLAND=${WAYLAND_DISPLAY:-—}"
+}
+
+restart_waybar() {
+  ensure_hypr_env
+  if pgrep -x waybar >/dev/null 2>&1; then
+    pkill -x waybar
+    for _ in $(seq 1 25); do pgrep -x waybar >/dev/null 2>&1 || break; sleep 0.1; done
+  fi
+  setsid waybar >>"$LOG" 2>&1 &
+  log "waybar restarted"
+}
+
+detect_wayland() {
+  if [ -n "${WAYLAND_DISPLAY:-}" ]; then printf '%s\n' "$WAYLAND_DISPLAY"; return 0; fi
+  local f
+  for f in /run/user/"$UID_"/wayland-*; do
+    case "$f" in *.lock) continue ;; esac
+    [ -S "$f" ] && { printf '%s\n' "$(basename "$f")"; return 0; }
+  done
+  return 1
+}
+
+restart_wallpaper() { # <qs dir>
+  local dir="$1"
+  # у ігровому режимі паралакс не потрібен — тримаємо статичну картинку
+  if [ -f "$BASE/state/game-mode.active" ]; then
+    log "game mode активний -> оновлюю статичні шпалери замість qs"
+    "$BASE/bin/game-mode" wallpaper >>"$LOG" 2>&1
+    return 0
+  fi
+  pkill -f "qs -p .*wallpapers_QS/.*/shell.qml" >/dev/null 2>&1
+  pkill -f "cava -p /tmp/cava_qs.conf" >/dev/null 2>&1
+  pkill -x cava >/dev/null 2>&1   # прибираємо «сиріт», інакше бари застигають
+  sleep 0.5
+  ensure_hypr_env
+  setsid qs -p "$dir/shell.qml" >>"$LOG" 2>&1 &
+  log "qs started: $dir"
+}
+
+write_menu_css() { # колір меню під поточну тему
+  local tpl="$BASE/menu.css.tpl" out="$BASE/menu.css" rgb
+  [ -f "$tpl" ] || return 0
+  rgb="$(python3 - "$MENU_ACCENT" <<'PY'
+import sys
+h = sys.argv[1].lstrip("#")
+print(",".join(str(int(h[i:i+2], 16)) for i in (0, 2, 4)))
+PY
+)" || return 0
+  sed -e "s/@ACCENT_RGB@/$rgb/g" -e "s/@ACCENT@/$MENU_ACCENT/g" -e "s|@BG@|${MENU_BG:-rgba(11,16,32,0.82)}|g" \
+      "$tpl" > "$out"
+}
+
+apply_theme() {
+  local dir="$1"
+  local ID LABEL QS_DIR HYPR_ACTIVE_1 HYPR_ACTIVE_2 HYPR_ANGLE HYPR_INACTIVE
+  local ICON MENU_ACCENT MENU_BG
+  # shellcheck disable=SC1090
+  . "$dir/theme.conf" || { echo "немає theme.conf у $dir" >&2; return 1; }
+
+  # --- меню тем (колір під обрану тему) ---
+  write_menu_css
+  ensure_hypr_env
+  # --- waybar ---
+  replace_palette "$CFG/waybar/style.css" "$dir/waybar.css.head"
+  # --- swaync ---
+  replace_palette "$CFG/swaync/style.css" "$dir/swaync.css.head"
+  # --- wofi ---
+  [ -f "$dir/wofi.css" ] && cp "$dir/wofi.css" "$CFG/wofi/style.css"
+  # --- kitty (файл + живі вікна) ---
+  if [ -f "$dir/kitty.colors" ] && [ -f "$CFG/kitty/kitty.conf" ]; then
+    cp "$CFG/kitty/kitty.conf" "$CFG/kitty/kitty.conf.theme-bak"
+    python3 "$BASE/lib/apply_colors.py" kitty "$CFG/kitty/kitty.conf" "$dir/kitty.colors" >>"$LOG" 2>&1
+    if pgrep -x kitty >/dev/null 2>&1; then
+      kitty @ set-colors --all -c "$dir/kitty.colors" >/dev/null 2>&1 || true
+    fi
+  fi
+  # --- Hyprland рамки: живі + у конфізі ---
+  hyprctl keyword general:col.active_border "$HYPR_ACTIVE_1 $HYPR_ACTIVE_2 $HYPR_ANGLE" >/dev/null 2>&1
+  hyprctl keyword general:col.inactive_border "$HYPR_INACTIVE" >/dev/null 2>&1
+  # На Lua-конфігу `keyword` інколи відповідає «unknown request» і нічого не робить —
+  # тому перевіряємо фактичне значення і за потреби дострілюємо через eval.
+  local want="${HYPR_ACTIVE_1:5:6}"
+  if ! hyprctl getoption general:col.active_border 2>/dev/null | grep -qi "$want"; then
+    log "border keyword не застосувався -> eval fallback"
+    hyprctl eval "hl.config({ general = { col = { active_border = { colors = {\"$HYPR_ACTIVE_1\", \"$HYPR_ACTIVE_2\"}, angle = $HYPR_ANGLE } } } })" >>"$LOG" 2>&1
+  fi
+  if [ -f "$CFG/hypr/hyprland.lua" ]; then
+    cp "$CFG/hypr/hyprland.lua" "$CFG/hypr/hyprland.lua.theme-bak"
+    python3 "$BASE/lib/apply_colors.py" hypr "$CFG/hypr/hyprland.lua" \
+      "$HYPR_ACTIVE_1" "$HYPR_ACTIVE_2" "$HYPR_ANGLE" "$HYPR_INACTIVE" >>"$LOG" 2>&1
+    if command -v luac >/dev/null 2>&1 && ! luac -p "$CFG/hypr/hyprland.lua" 2>>"$LOG"; then
+      cp "$CFG/hypr/hyprland.lua.theme-bak" "$CFG/hypr/hyprland.lua"
+      log "lua syntax error -> restored"
+    fi
+  fi
+  # --- шпалери + віджети ---
+  restart_wallpaper "$QS_DIR"
+  # --- перезапуск панелі / css сповіщень ---
+  restart_waybar
+  if pgrep -x swaync >/dev/null 2>&1; then swaync-client --reload-css >/dev/null 2>&1 || true; fi
+
+  printf '%s\n' "$ID" > "$STATE"
+  log "themed -> $ID ($LABEL)"
+  notify-send -a "Тема" "Тема: $LABEL" "Шпалери: $(basename "$QS_DIR")" 2>/dev/null || true
+  printf 'Тема: %s\nШпалери: %s\n' "$LABEL" "$QS_DIR"
+}
+
+cmd="${1:-current}"
+case "$cmd" in
+  apply)
+    if dir="$(resolve "${2:-}")"; then apply_theme "$dir"; else echo "Невідома тема: ${2:-}" >&2; exit 1; fi ;;
+  toggle)
+    if [ "$(current_id)" = "azure" ]; then apply_theme "$BASE/themes/1-madara"; else apply_theme "$BASE/themes/2-azure"; fi ;;
+  current) echo "$(current_id)" ;;
+  list)
+    for d in "$BASE"/themes/*/; do
+      ID=""; LABEL=""; . "$d/theme.conf" 2>/dev/null
+      printf '%s\t%s\t%s\n' "$ID" "$LABEL" "$(basename "$d")"
+    done ;;
+  menu) exec "$BASE/bin/theme-menu" ;;
+  *) echo "usage: theme-switch [apply 1|2|madara|azure | toggle | current | list | menu]" >&2; exit 1 ;;
+esac

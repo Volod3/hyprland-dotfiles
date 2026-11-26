@@ -1,0 +1,8 @@
+#!/bin/sh
+# claude-phone — Claude Code Remote Control у фоні (tmux-сесія «claude-phone»), щоб писати мені з телефона:
+# застосунок Claude → Code → сесія «ПК вдома». Подивитись / відповісти на запитання в терміналі:
+#     tmux attach -t claude-phone      (вийти, не зупиняючи: Ctrl+B, потім D)
+tmux has-session -t claude-phone 2>/dev/null && exit 0
+mkdir -p "$HOME/Claude"; cd "$HOME/Claude" || exit 1     # окрема тека: довіра до неї зберігається (до домашньої — ні)
+# у циклі: якщо Remote Control завершиться (мережа, оновлення, випадково закритий термінал) — за 10 с запуститься знову
+exec tmux new-session -d -s claude-phone "while true; do $HOME/.local/bin/claude remote-control --name 'ПК вдома'; echo 'Remote Control зупинився — перезапуск за 10 с'; sleep 10; done"

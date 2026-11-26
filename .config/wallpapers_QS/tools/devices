@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+"""devices — диски й флешки (як «Диски й пристрої» у KDE Plasma). Працює на будь-якому ПК (lsblk + udisks2).
+
+  devices list              JSON: знімні диски (розділи, місце, швидкість, незаписані дані) + усі змонтовані ФС
+  devices waybar            JSON для модуля waybar (значок лише коли підключено знімний диск)
+  devices mount  /dev/sdX1  змонтувати (udisks2, без пароля)
+  devices open   /dev/sdX1  змонтувати й відкрити у файловому менеджері
+  devices eject  /dev/sdX   БЕЗПЕЧНО від'єднати: дочекатися запису всіх даних → відмонтувати → вимкнути живлення
+  devices format /dev/sdX FS [НАЗВА]   форматувати всю флешку: нова таблиця розділів + 1 розділ + ФС
+                            (FS: exfat | vfat | ntfs | ext4) і змонтувати — через udisks2 (як KDE/GNOME)
+  devices watch             потік подій (для спливаючих віконець): підключено / від'єднано (+ автомонтування)
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+CACHE = os.path.join(HOME, ".cache/devices-io.json")
+EJECT = os.path.join(HOME, ".cache/devices-eject.json")
+OSD = ["qs", "-p", os.path.join(HOME, ".config/wallpapers_QS/bg_osd/shell.qml"), "ipc", "call", "osd"]
+SKIP_FS = {"swap", "squashfs", "iso9660x"}
+
+
+def run(cmd, timeout=15):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout + r.stderr
+    except Exception as e:  # noqa: BLE001
+        return 1, str(e)
+
+
+def osd(*args):
+    subprocess.Popen(OSD + [str(a) for a in args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def human(n):
+    n = float(n or 0)
+    for u in ("Б", "КБ", "МБ", "ГБ", "ТБ"):
+        if n < 1024 or u == "ТБ":
+            return ("%.0f %s" if u in ("Б", "КБ") or n >= 100 else "%.1f %s") % (n, u)
+        n /= 1024
+
+
+def lsblk():
+    _, out = run(["lsblk", "-J", "-b", "-o", "NAME,PATH,TYPE,TRAN,RM,HOTPLUG,SIZE,FSTYPE,LABEL,MODEL,VENDOR,MOUNTPOINTS,FSAVAIL,FSUSED,FSSIZE,MAJ:MIN"])
+    try:
+        return json.loads(out).get("blockdevices", [])
+    except ValueError:
+        return []
+
+
+def meminfo(key):
+    try:
+        for line in open("/proc/meminfo"):
+            if line.startswith(key + ":"):
+                return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return 0
+
+
+def disk_stat(name):
+    """(прочитано секторів, записано секторів, запитів у польоті)"""
+    try:
+        f = open(f"/sys/block/{name}/stat").read().split()
+        return int(f[2]), int(f[6]), int(f[8])
+    except (OSError, IndexError, ValueError):
+        return 0, 0, 0
+
+
+def removable(d):
+    # для перевірки без флешки: ~/.cache/devices-test → loop-пристрої теж вважаються знімними
+    if d.get("type") == "loop" and os.path.exists(os.path.join(HOME, ".cache/devices-test")) and d.get("children") or \
+       (d.get("type") == "loop" and os.path.exists(os.path.join(HOME, ".cache/devices-test")) and d.get("fstype")):
+        return True
+    return d.get("type") == "disk" and (d.get("rm") or d.get("hotplug") or d.get("tran") in ("usb", "mmc")) and int(d.get("size") or 0) > 0
+
+
+def label_of(d, part=None):
+    p = part or {}
+    name = p.get("label") or " ".join(x for x in ((d.get("vendor") or "").strip(), (d.get("model") or "").strip()) if x)
+    return name or d.get("name")
+
+
+def collect():
+    devs = lsblk()
+    prev = {}
+    try:
+        prev = json.load(open(CACHE))
+    except (OSError, ValueError):
+        pass
+    now = time.time()
+    io = {"t": now}
+    dirty = meminfo("Dirty") + meminfo("Writeback")
+    try:
+        eject = json.load(open(EJECT))
+    except (OSError, ValueError):
+        eject = {}
+    drives = []
+    for d in devs:
+        if not removable(d):
+            continue
+        rs, ws, infl = disk_stat(d["name"])
+        io[d["name"]] = [rs, ws]
+        p = prev.get(d["name"])
+        dt = max(0.2, now - prev.get("t", now - 1))
+        rd = wr = 0
+        if p:
+            rd = max(0, rs - p[0]) * 512 / dt
+            wr = max(0, ws - p[1]) * 512 / dt
+        parts = []
+        for c in (d.get("children") or [d]):
+            if not c.get("fstype") or c.get("fstype") in SKIP_FS:
+                continue
+            mps = [m for m in (c.get("mountpoints") or []) if m]
+            parts.append({"path": c["path"], "label": label_of(d, c), "fs": c.get("fstype"),
+                          "size": int(c.get("fssize") or c.get("size") or 0), "used": int(c.get("fsused") or 0),
+                          "mount": mps[0] if mps else ""})
+        writing = infl > 0 or wr > 64 * 1024
+        st = eject.get(d["path"], {})
+        drives.append({
+            "path": d["path"], "name": d["name"], "label": label_of(d), "size": int(d.get("size") or 0),
+            "tran": d.get("tran") or "", "parts": parts, "read": rd, "write": wr, "busy": writing,
+            "pending": dirty if writing else 0,
+            "eject": st if st and now - st.get("t", 0) < 120 else {},
+        })
+    tmp = CACHE + ".%d" % os.getpid()          # атомарно: файл пишуть одночасно waybar, панель і вікна
+    with open(tmp, "w") as f:
+        json.dump(io, f)
+    os.replace(tmp, CACHE)
+    # змонтовані ФС (для розділу «Диски» у вікні «Система»)
+    fs = []
+    _, out = run(["findmnt", "-J", "-b", "-o", "TARGET,SOURCE,FSTYPE,SIZE,USED,AVAIL", "-t",
+                  "ext4,ext3,btrfs,xfs,f2fs,vfat,exfat,ntfs3,ntfs,fuseblk,zfs"])
+    try:
+        seen = set()
+        for m in json.loads(out).get("filesystems", []):
+            src = re.sub(r"\[.*\]$", "", m.get("source") or "")
+            if src in seen or (m.get("target") or "").startswith(("/var/lib/docker", "/snap")):
+                continue
+            seen.add(src)
+            fs.append({"mount": m["target"], "source": src, "fs": m.get("fstype"), "size": int(m.get("size") or 0),
+                       "used": int(m.get("used") or 0), "avail": int(m.get("avail") or 0),
+                       "removable": any(src.startswith(x["path"]) for x in drives)})
+    except ValueError:
+        pass
+    return {"drives": drives, "mounts": fs, "dirty": dirty}
+
+
+def cmd_list():
+    print(json.dumps(collect(), ensure_ascii=False))
+
+
+def cmd_waybar():
+    d = collect()["drives"]
+    if not d:
+        print(json.dumps({"text": "", "class": "none", "tooltip": ""}))
+        return
+    busy = any(x["busy"] for x in d)
+    tip = "\n".join("%s — %s%s" % (x["label"], human(x["size"]), " (запис…)" if x["busy"] else "") for x in d)
+    print(json.dumps({"text": "󱊞" if not busy else "󱊟", "class": "busy" if busy else "present",
+                      "tooltip": "Знімні диски:\n" + tip + "\nКлік — меню пристроїв"}, ensure_ascii=False))
+
+
+def clean_err(out):
+    """Зрозумілий текст замість сирої помилки udisks."""
+    o = out.lower()
+    if "notauthorized" in o or "not authorized" in o:
+        return "немає дозволу (це не знімний диск — потрібен пароль адміністратора)"
+    if "busy" in o or "зайнят" in o:
+        return "диск використовується — закрий файли й вікна з нього"
+    lines = [l for l in out.strip().splitlines() if "textual authentication agent" not in l and l.strip()]
+    msg = lines[-1] if lines else out.strip()
+    return re.sub(r"^.*?Error[^:]*:\s*", "", msg)[:140]
+
+
+def udisks(*args):
+    return run(["udisksctl", *args, "--no-user-interaction"], timeout=60)
+
+
+def cmd_mount(dev, open_after=False):
+    mp = ""
+    for d in lsblk():
+        for c in (d.get("children") or [d]):
+            if c.get("path") == dev:
+                mps = [m for m in (c.get("mountpoints") or []) if m]
+                mp = mps[0] if mps else ""
+    if not mp:
+        rc, out = udisks("mount", "-b", dev)
+        m = re.search(r" at (.+?)\.?$", out.strip())
+        mp = m.group(1) if m else ""
+        if rc:
+            osd("event", "error", "Не вдалося змонтувати", clean_err(out))
+            return
+    if open_after and mp:
+        subprocess.Popen(["setsid", "-f", "xdg-open", mp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def set_eject(path, **kw):
+    try:
+        st = json.load(open(EJECT))
+    except (OSError, ValueError):
+        st = {}
+    kw["t"] = time.time()
+    st[path] = kw
+    tmp = EJECT + ".%d" % os.getpid()
+    with open(tmp, "w") as f:
+        json.dump(st, f)
+    os.replace(tmp, EJECT)
+
+
+def cmd_eject(disk):
+    """Як у KDE: спершу дописуємо всі дані (з прогресом), тоді відмонтовуємо й вимикаємо живлення."""
+    d = next((x for x in collect()["drives"] if x["path"] == disk), None)
+    if not d:
+        return
+    name = d["label"]
+    mounts = [p["mount"] for p in d["parts"] if p["mount"]]
+    start = max(1, meminfo("Dirty") + meminfo("Writeback"))
+    if mounts:
+        procs = [subprocess.Popen(["sync", "-f", m]) for m in mounts]
+        shown = False
+        while any(p.poll() is None for p in procs):
+            left = meminfo("Dirty") + meminfo("Writeback")
+            pct = int(100 * (1 - min(1, left / start)))
+            set_eject(disk, stage="sync", pct=pct, left=left)
+            if left > 4 * 1024 * 1024 or shown:
+                osd("progress", "usb", "Дописую дані на «%s»" % name, pct, "залишилось " + human(left))
+                shown = True
+            time.sleep(0.4)
+    set_eject(disk, stage="unmount", pct=100)
+    for p in d["parts"]:
+        if p["mount"]:
+            rc, out = udisks("unmount", "-b", p["path"])
+            if rc:
+                msg = clean_err(out)
+                set_eject(disk, stage="error", msg="Не від'єднано: " + msg)
+                osd("event", "error", "«%s» не від'єднано" % name, msg)
+                return
+    udisks("power-off", "-b", disk)
+    set_eject(disk, stage="done", pct=100)
+    osd("event", "usb-ok", "Можна від'єднати", "«%s» — усі дані записано" % name)
+
+
+def poke_waybar():
+    """Миттєво оновити значок флешки в waybar (модуль custom/devices має "signal": 8)."""
+    subprocess.run(["pkill", "-RTMIN+8", "-x", "waybar"], capture_output=True)
+
+
+def setting(key, default):
+    try:
+        return json.load(open(os.path.join(HOME, ".config/hypr/user-settings.json"))).get(key, default)
+    except (OSError, ValueError):
+        return default
+
+
+FMT = {   # тип розділу MBR + назва ФС для udisks
+    "exfat": ("0x07", "exfat"), "ntfs": ("0x07", "ntfs"), "vfat": ("0x0c", "vfat"), "ext4": ("0x83", "ext4"),
+}
+
+
+def gdbus(obj, method, *args, timeout=600):
+    return run(["gdbus", "call", "--system", "--dest", "org.freedesktop.UDisks2", "--timeout", str(timeout),
+                "--object-path", obj, "--method", method, *args], timeout=timeout + 10)
+
+
+def cmd_format(disk, fs, label=""):
+    """Форматування всієї флешки: таблиця розділів MBR → один розділ на весь диск → ФС → змонтувати."""
+    fs = fs if fs in FMT else "exfat"
+    d = next((x for x in collect()["drives"] if x["path"] == disk), None)
+    if not d:
+        osd("event", "error", "Форматування", "диск не знайдено")
+        return
+    name = d["label"]
+    label = re.sub(r"[^\w .-]", "", label)[:11 if fs == "vfat" else 32].strip()
+    obj = "/org/freedesktop/UDisks2/block_devices/" + os.path.basename(disk)
+    set_eject(disk, stage="format", pct=5, msg="відмонтовую")
+    osd("progress", "usb", "Форматую «%s»" % name, 5, "відмонтовую")
+    for p in d["parts"]:
+        if p["mount"]:
+            rc, out = udisks("unmount", "-b", p["path"])
+            if rc:
+                msg = clean_err(out)
+                set_eject(disk, stage="error", msg="Не відформатовано: " + msg)
+                osd("event", "error", "«%s» не відформатовано" % name, msg)
+                return
+    set_eject(disk, stage="format", pct=25, msg="нова таблиця розділів")
+    osd("progress", "usb", "Форматую «%s»" % name, 25, "нова таблиця розділів")
+    rc, out = gdbus(obj, "org.freedesktop.UDisks2.Block.Format", "dos", "{}")
+    if rc:
+        msg = clean_err(out)
+        set_eject(disk, stage="error", msg="Не відформатовано: " + msg)
+        osd("event", "error", "«%s» не відформатовано" % name, msg)
+        return
+    set_eject(disk, stage="format", pct=55, msg="створюю розділ і файлову систему")
+    osd("progress", "usb", "Форматую «%s»" % name, 55, "файлова система " + {"vfat": "FAT32"}.get(fs, fs.upper() if fs != "exfat" else "exFAT"))
+    ptype, fstype = FMT[fs]
+    fopts = "{'label': <'%s'>%s}" % (label.replace("'", ""), ", 'take-ownership': <true>" if fs == "ext4" else "")
+    rc, out = gdbus(obj, "org.freedesktop.UDisks2.PartitionTable.CreatePartitionAndFormat",
+                    "0", "0", ptype, "", "{}", fstype, fopts)
+    if rc:
+        msg = clean_err(out)
+        set_eject(disk, stage="error", msg="Не відформатовано: " + msg)
+        osd("event", "error", "«%s» не відформатовано" % name, msg)
+        return
+    time.sleep(1.0)
+    set_eject(disk, stage="format", pct=90, msg="монтую")
+    nd = next((x for x in collect()["drives"] if x["path"] == disk), None)
+    for p in (nd or {}).get("parts", []):
+        if not p["mount"]:
+            udisks("mount", "-b", p["path"])
+    set_eject(disk, stage="formatted", pct=100)
+    osd("event", "usb-ok", "Відформатовано", "«%s» · %s%s" % (name, {"vfat": "FAT32", "exfat": "exFAT"}.get(fs, fs.upper()),
+                                                                (" · " + label) if label else ""))
+
+
+def cmd_watch():
+    """Підключено / від'єднано знімний диск → подія для OSD (+ автомонтування)."""
+    known = {d["path"]: d for d in collect()["drives"]}
+    p = subprocess.Popen(["udevadm", "monitor", "--udev", "--subsystem-match=block"], stdout=subprocess.PIPE, text=True)
+    pending = 0.0
+    import select
+    parent = os.getppid()
+    tries = {}                               # скільки разів чекали на розділи для кожного диска
+    while True:
+        if os.getppid() != parent:          # віконця (bg_osd) закрились/перезапустились — не лишатися «сиротою»
+            p.terminate()
+            return
+        r, _, _ = select.select([p.stdout], [], [], 0.5)
+        if r:
+            line = p.stdout.readline()
+            if not line:
+                break
+            if " add " in line or " remove " in line or " change " in line:
+                pending = time.time() + 0.5           # коротко дочекатися розділів
+            continue
+        if pending and time.time() >= pending:
+            pending = 0.0
+            now = {d["path"]: d for d in collect()["drives"]}
+            auto = setting("devices.automount", True)
+            # дія при підключенні: menu — меню пристроїв (як у KDE), files — відкрити вміст, none — нічого
+            action = setting("devices.onconnect", "menu")
+            autoopen = action == "files"
+            changed = False
+            for path, d in now.items():
+                if path not in known:
+                    changed = True
+                    if not d["parts"] and tries.get(path, 0) < 3:
+                        # розділи ще не з'явились — перевіримо ще раз трохи згодом (не більше 3 разів)
+                        tries[path] = tries.get(path, 0) + 1
+                        pending = time.time() + 0.7
+                        continue
+                    tries.pop(path, None)
+                    print(json.dumps({"ev": "added", "label": d["label"], "size": human(d["size"]) + ("" if d["parts"] else " · без розділів — відформатуй"),
+                                      "path": path}, ensure_ascii=False), flush=True)
+                    poke_waybar()
+                    if action == "menu":
+                        subprocess.Popen(["qs", "-p", os.path.join(HOME, ".config/wallpapers_QS/bg_popups/shell.qml"), "ipc", "call", "popup", "open", "dev"],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    for part in d["parts"]:
+                        mp = part["mount"]
+                        if auto and not mp:
+                            rc, out = udisks("mount", "-b", part["path"])
+                            m = re.search(r" at (.+?)\.?$", out.strip())
+                            mp = m.group(1) if (rc == 0 and m) else ""
+                        if mp and autoopen:
+                            subprocess.Popen(["setsid", "-f", "xdg-open", mp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            autoopen = False          # одне вікно на флешку, навіть якщо розділів кілька
+            for path, d in known.items():
+                if path not in now:
+                    changed = True
+                    print(json.dumps({"ev": "removed", "label": d["label"], "path": path}, ensure_ascii=False), flush=True)
+            if changed:
+                poke_waybar()
+            # пристрій без розділів не запам'ятовуємо — щоб «підключено» спрацювало, коли вони з'являться
+            now = {k: v for k, v in now.items() if v["parts"] or k in known or k not in tries}
+            known = now
+
+
+def main():
+    a = sys.argv[1:] or ["list"]
+    if a[0] == "list":
+        cmd_list()
+    elif a[0] == "waybar":
+        cmd_waybar()
+    elif a[0] == "mount" and len(a) > 1:
+        cmd_mount(a[1])
+    elif a[0] == "open" and len(a) > 1:
+        cmd_mount(a[1], open_after=True)
+    elif a[0] == "eject" and len(a) > 1:
+        cmd_eject(a[1])
+    elif a[0] == "format" and len(a) > 2:
+        cmd_format(a[1], a[2], a[3] if len(a) > 3 else "")
+    elif a[0] == "watch":
+        cmd_watch()
+    else:
+        print(__doc__)
+
+
+if __name__ == "__main__":
+    main()

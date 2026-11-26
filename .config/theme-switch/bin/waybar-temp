@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# waybar-модуль температури: правильний сенсор (coretemp / Package id 0),
+# з fallback'ами, кольором за порогом і деталями в тултіпі.
+set -uo pipefail
+
+pkg="" cores="" src=""
+for h in /sys/class/hwmon/hwmon*; do
+  [ -r "$h/name" ] || continue
+  name="$(cat "$h/name" 2>/dev/null)"
+  case "$name" in
+    coretemp)
+      pkg="$(cat "$h/temp1_input" 2>/dev/null)"; src="$h"
+      ;;
+  esac
+done
+
+# fallback: k10temp (AMD) / acpitz / перший доступний temp1_input
+if [ -z "${pkg:-}" ]; then
+  for h in /sys/class/hwmon/hwmon*; do
+    n="$(cat "$h/name" 2>/dev/null)"
+    case "$n" in
+      k10temp|zenpower) pkg="$(cat "$h/temp1_input" 2>/dev/null)"; src="$h"; break ;;
+    esac
+  done
+fi
+if [ -z "${pkg:-}" ]; then
+  for h in /sys/class/hwmon/hwmon*; do
+    if [ -r "$h/temp1_input" ]; then pkg="$(cat "$h/temp1_input" 2>/dev/null)"; src="$h"; break; fi
+  done
+fi
+
+[ -n "${pkg:-}" ] || { printf '{"text":"—","tooltip":"Немає сенсора температури"}\n'; exit 0; }
+
+c=$(( pkg / 1000 ))
+cl=normal
+[ "$c" -ge 75 ] && cl=warm
+[ "$c" -ge 88 ] && cl=hot
+
+# деталі (ядра) для тултіпа
+cores="$(
+  if [ -n "$src" ] && [ -r "$src/temp1_label" ]; then
+    for f in "$src"/temp*_input; do
+      lbl="$(cat "${f%_input}_label" 2>/dev/null)"
+      [ -n "$lbl" ] || continue
+      v=$(( $(cat "$f" 2>/dev/null || echo 0) / 1000 ))
+      printf '%s: %s°C\\n' "$lbl" "$v"
+    done
+  fi
+)"
+[ -n "$cores" ] || cores="сенсор: ${src##*/}"
+
+icon=""; [ "$c" -ge 75 ] && icon="󰈸 "
+printf '{"text":"%s%s°C","class":"%s","tooltip":"Температура CPU: %s°C\\n%s"}\n' "$icon" "$c" "$cl" "$c" "$cores"

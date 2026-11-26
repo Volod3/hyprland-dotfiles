@@ -1,0 +1,5 @@
+#!/bin/sh
+# claude — Claude Code з розширення VS Code (найновіша встановлена версія), щоб працював і в терміналі.
+bin=$(ls -d "$HOME"/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude 2>/dev/null | sort -V | tail -n1)
+[ -x "$bin" ] || { echo "Claude Code не знайдено (розширення VS Code anthropic.claude-code)" >&2; exit 1; }
+exec "$bin" "$@"

@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+"""usettings — бекенд розділів «Живлення», «Екран», «Клавіатура», «Миша й тачпад», «Вікна», «Сповіщення».
+
+  usettings get                 усі значення (JSON)
+  usettings set KEY VALUE       застосувати одразу + зберегти (переживає перезапуск)
+  usettings startup             запустити при вході: hypridle, нічний режим (з hyprland.lua)
+
+Де зберігається:
+  ~/.config/hypr/user-settings.json  — усе
+  ~/.config/hypr/user-settings.lua   — згенеровано з json (Hyprland-опції + масштаб екрана);
+                                       hyprland.lua підключає його в кінці
+  ~/.config/hypr/hypridle.conf       — згенеровано (сон, блокування, вимкнення екрана)
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+HYPR = os.path.join(HOME, ".config/hypr")
+STORE = os.path.join(HYPR, "user-settings.json")
+LUA = os.path.join(HYPR, "user-settings.lua")
+IDLE_CONF = os.path.join(HYPR, "hypridle.conf")
+SUNSET_CONF = os.path.join(HYPR, "hyprsunset.conf")
+OVERRIDES = os.path.join(HOME, ".config/quickshell-settings/overrides.json")   # сторінка «Оформлення»
+
+# Hyprland-опції, які можна міняти з цих сторінок (ключ → тип)
+HYPR_KEYS = {
+    "input:repeat_rate": int, "input:repeat_delay": int, "input:numlock_by_default": bool,
+    "input:sensitivity": float, "input:accel_profile": str, "input:natural_scroll": bool,
+    "input:scroll_factor": float, "input:follow_mouse": int, "input:kb_layout": str, "input:kb_options": str,
+    "input:left_handed": bool,
+    "input:touchpad:natural_scroll": bool, "input:touchpad:tap-to-click": bool,
+    "input:touchpad:disable_while_typing": bool, "input:touchpad:scroll_factor": float,
+    "input:touchpad:drag_lock": bool,
+    "general:resize_on_border": bool, "general:layout": str, "misc:focus_on_activate": bool,
+    "cursor:hide_on_key_press": bool, "cursor:inactive_timeout": float, "misc:vrr": int,
+    "decoration:dim_inactive": bool, "decoration:dim_strength": float,
+    "misc:animate_manual_resizes": bool, "misc:mouse_move_enables_dpms": bool, "misc:key_press_enables_dpms": bool,
+    "binds:workspace_back_and_forth": bool,
+}
+DEFAULTS = {
+    "idle.dim": 300, "idle.lock": 0, "idle.dpms": 600, "idle.suspend": 0, "idle.lock_before_sleep": True,
+    "idle.ac_suspend": False,        # засинати від бездіяльності, коли на зарядці (вимкнено — щоб ПК був доступний з телефона)
+    "night.enabled": False, "night.temp": 4500,
+    "night.schedule": False, "night.from": "20:00", "night.to": "07:00",
+    "lid.battery": "suspend", "lid.ac": "suspend",       # suspend | lock | screen | nothing | poweroff
+    "display.scale": 1.0,
+    # живлення / відеокарта / батарея — застосовує ~/.config/wallpapers_QS/tools/powerd
+    "gpu.apps": "auto", "power.on_battery": "keep", "power.on_ac": "keep", "power.low_battery": 20,
+    "battery.limit": "80", "power.critical_action": "suspend",
+    "cursor.theme": "Glass", "cursor.size": 24,
+    "devices.automount": True, "devices.onconnect": "menu",
+    "eco.hz60": True, "eco.effects": True, "eco.static_wallpaper": True, "eco.hide_pet": True,
+    "eco.no_turbo": True, "eco.kbd_light": True, "eco.brightness": 0,
+}
+POWERD = os.path.join(HOME, ".config/wallpapers_QS/tools/powerd")
+POWERD_KEYS = ("gpu.", "power.on_", "power.low_", "power.critical", "battery.", "eco.")
+
+
+def run(cmd, timeout=8):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout
+    except Exception as e:  # noqa: BLE001
+        return 1, str(e)
+
+
+def load():
+    try:
+        return json.load(open(STORE))
+    except (OSError, ValueError):
+        return {}
+
+
+def save(d):
+    os.makedirs(HYPR, exist_ok=True)
+    json.dump(d, open(STORE, "w"), ensure_ascii=False, indent=2)
+
+
+def lua_lit(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    return '"%s"' % str(v).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def lua_cfg(key, v):
+    parts = key.split(":")
+    inner = "%s = %s" % (('["%s"]' % parts[-1]) if "-" in parts[-1] else parts[-1], lua_lit(v))
+    for p in reversed(parts[:-1]):
+        inner = "%s = { %s }" % (p, inner)
+    return "hl.config({ %s })" % inner
+
+
+def monitor_name():
+    _, o = run(["hyprctl", "monitors", "-j"])
+    try:
+        return json.loads(o)[0]["name"]
+    except Exception:  # noqa: BLE001
+        return "eDP-1"
+
+
+def write_lua(d):
+    lines = ["-- Згенеровано застосунком «Налаштування» (Win+I). Вручну не редагуй — перезапишеться.",
+             "-- Підключається в кінці hyprland.lua, тож перекриває значення звідти.", ""]
+    try:   # «Оформлення» (відступи, рамки, прозорість, блюр) — щоб теж переживало перезапуск
+        for k, v in (json.load(open(OVERRIDES)).get("values") or {}).items():
+            if v is not None:
+                lines.append(lua_cfg(k, v))
+    except (OSError, ValueError):
+        pass
+    for k, v in (d.get("hypr") or {}).items():
+        lines.append(lua_cfg(k, v))
+    if d.get("cursor.theme") or d.get("cursor.size"):
+        th = d.get("cursor.theme", DEFAULTS["cursor.theme"]); sz = int(d.get("cursor.size", DEFAULTS["cursor.size"]))
+        lines += ['hl.env("XCURSOR_THEME", "%s")' % th, 'hl.env("XCURSOR_SIZE", "%d")' % sz,
+                  'hl.env("HYPRCURSOR_THEME", "%s")' % th, 'hl.env("HYPRCURSOR_SIZE", "%d")' % sz]
+    for name, m in (d.get("monitors") or {}).items():
+        lines.append(monitor_spec(name, m))
+    sc = d.get("display.scale")
+    if sc and float(sc) != 1.0:
+        lines.append('hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "%s" })' % sc)
+    open(LUA, "w").write("\n".join(lines) + "\n")
+
+
+def write_idle(d):
+    g = lambda k: d.get(k, DEFAULTS[k])  # noqa: E731
+    lock = os.path.join(HOME, ".config/wallpapers_QS/tools/lock")     # екран блокування Quickshell
+    out = ["# Згенеровано застосунком «Налаштування» (Win+I) → Живлення. Перезаписується.",
+           "general {",
+           f"    lock_cmd = {lock}",
+           "    before_sleep_cmd = " + ("loginctl lock-session" if g("idle.lock_before_sleep") else "true"),
+           "    after_sleep_cmd = hyprctl dispatch 'hl.dsp.dpms({ action = \"on\" })'",
+           "}", ""]
+    if int(g("idle.dim")) > 0:
+        out += ["listener {", f"    timeout = {int(g('idle.dim'))}",
+                "    on-timeout = brightnessctl -s set 15%", "    on-resume = brightnessctl -r", "}", ""]
+    if int(g("idle.lock")) > 0:
+        out += ["listener {", f"    timeout = {int(g('idle.lock'))}", "    on-timeout = loginctl lock-session", "}", ""]
+    if int(g("idle.dpms")) > 0:
+        out += ["listener {", f"    timeout = {int(g('idle.dpms'))}",
+                "    on-timeout = hyprctl dispatch 'hl.dsp.dpms({ action = \"off\" })'",
+                "    on-resume = hyprctl dispatch 'hl.dsp.dpms({ action = \"on\" })'", "}", ""]
+    if int(g("idle.suspend")) > 0:
+        sus = "systemctl suspend" if g("idle.ac_suspend") else \
+            "sh -c '[ \"$(cat /sys/class/power_supply/A*/online 2>/dev/null | head -n1)\" = 1 ] || systemctl suspend'"
+        out += ["listener {", f"    timeout = {int(g('idle.suspend'))}", "    on-timeout = " + sus, "}", ""]
+    open(IDLE_CONF, "w").write("\n".join(out))
+
+
+def restart_idle():
+    run(["pkill", "-x", "hypridle"])
+    subprocess.Popen(["setsid", "-f", "hypridle", "-c", IDLE_CONF], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def hhmm(v, default):
+    m = re.match(r"^\s*(\d{1,2})[:.](\d{2})\s*$", str(v))
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        return default
+    return "%02d:%s" % (int(m.group(1)), m.group(2))
+
+
+def night(d):
+    """Нічне світло: постійно (-t) або за розкладом — профілі hyprsunset з часом."""
+    run(["pkill", "-x", "hyprsunset"])
+    # дочекатися, поки старий процес звільнить свій сокет — інакше новий одразу падає
+    import time
+    for _ in range(30):
+        if run(["pgrep", "-x", "hyprsunset"])[0] != 0:
+            break
+        time.sleep(0.1)
+    g = lambda k: d.get(k, DEFAULTS[k])  # noqa: E731
+    temp = str(int(g("night.temp")))
+    if not g("night.enabled"):
+        if os.path.exists(SUNSET_CONF):
+            os.remove(SUNSET_CONF)
+        return
+    if g("night.schedule"):
+        frm, to = hhmm(g("night.from"), "20:00"), hhmm(g("night.to"), "07:00")
+        open(SUNSET_CONF, "w").write(
+            "# Згенеровано застосунком «Налаштування» (Win+I) → Екран → Нічний режим. Перезаписується.\n"
+            f"profile {{\n    time = {to}\n    identity = true\n}}\n"
+            f"profile {{\n    time = {frm}\n    temperature = {temp}\n}}\n")
+        cmd = ["setsid", "-f", "hyprsunset"]
+    else:
+        if os.path.exists(SUNSET_CONF):
+            os.remove(SUNSET_CONF)
+        cmd = ["setsid", "-f", "hyprsunset", "-t", temp]
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def hypr_get(key):
+    _, o = run(["hyprctl", "getoption", key, "-j"])
+    try:
+        j = json.loads(o)
+    except ValueError:
+        return None
+    for k in ("bool", "int", "float", "str"):
+        if k in j:
+            return j[k]
+    return None
+
+
+def cmd_get():
+    d = load()
+    vals = {k: hypr_get(k) for k in HYPR_KEYS}
+    for k, v in DEFAULTS.items():
+        vals[k] = d.get(k, v)
+    vals["lid.on_ac"] = on_ac()
+    _, p = run(["powerprofilesctl", "get"])
+    vals["power.profile"] = p.strip()
+    _, ps = run([POWERD, "status"])
+    try:
+        st = json.loads(ps)
+        lim = st.get("limit") or "?"
+        why = " (вручну до 100% один раз)" if st.get("full_once") else ""
+        vals["battery.info"] = (st["error"] if st.get("error") else
+                                f"заряджається до {lim}%{why} · стан батареї {st.get('health')}% · циклів {st.get('cycles')}"
+                                + (f" · на зарядці {st['ac_share']}% часу" if st.get("ac_share") is not None else ""))
+        vals["battery.full_once"] = st.get("full_once", False)
+        g = {"igpu": "вбудована Intel", "dgpu": "NVIDIA GTX 1650", "auto": "автоматично"}[st.get("gpu", "auto")]
+        vals["gpu.info"] = ("зараз економія → " if st.get("eco") else "зараз: ") + g
+    except (ValueError, KeyError):
+        pass
+    _, b = run(["brightnessctl", "-m"])
+    try:
+        vals["display.brightness"] = int(b.strip().split(",")[3].rstrip("%"))
+    except (IndexError, ValueError):
+        vals["display.brightness"] = 100
+    _, dnd = run(["swaync-client", "-D"])
+    vals["notify.dnd"] = dnd.strip() == "true"
+    _, mons = run(["hyprctl", "monitors", "-j"])
+    try:
+        vals["display.scale"] = json.loads(mons)[0]["scale"]
+    except Exception:  # noqa: BLE001
+        pass
+    print(json.dumps({"ok": True, "values": vals}, ensure_ascii=False))
+
+
+def coerce(key, raw):
+    t = HYPR_KEYS.get(key)
+    if t is None:
+        t = type(DEFAULTS.get(key, ""))
+    if t is bool:
+        return str(raw).lower() in ("1", "true", "on", "yes")
+    if t is int:
+        return int(round(float(raw)))
+    if t is float:
+        return float(raw)
+    return str(raw)
+
+
+def cmd_set(key, raw):
+    d = load()
+    msg = ""
+    if key in HYPR_KEYS:
+        v = coerce(key, raw)
+        run(["hyprctl", "eval", lua_cfg(key, v)])
+        d.setdefault("hypr", {})[key] = v
+        save(d)
+        write_lua(d)
+        got = hypr_get(key)
+        if key == "input:numlock_by_default":
+            # те саме на екрані входу (SDDM) і в консолях — системні файли, тож pkexec спитає пароль
+            subprocess.Popen(["pkexec", "/usr/local/bin/login-numlock", "on" if v else "off"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        print(json.dumps({"ok": True, "key": key, "value": v, "got": got}, ensure_ascii=False))
+        return
+    if key.startswith("idle."):
+        d[key] = coerce(key, raw)
+        save(d)
+        write_idle(d)
+        restart_idle()
+    elif key.startswith("night."):
+        v = coerce(key, raw)
+        if key in ("night.from", "night.to"):
+            v = hhmm(v, DEFAULTS[key])
+        d[key] = v
+        save(d)
+        night(d)
+    elif key == "display.scale":
+        d[key] = float(raw)
+        save(d)
+        write_lua(d)
+        run(["hyprctl", "eval", 'hl.monitor({ output = "%s", mode = "preferred", position = "auto", scale = "%s" })'
+             % (monitor_name(), raw)])
+    elif key.startswith("lid."):
+        d[key] = str(raw)
+        save(d)
+    elif key == "display.brightness":
+        run(["brightnessctl", "-n2", "set", "%d%%" % int(float(raw))])
+    elif key == "power.profile":
+        run(["powerprofilesctl", "set", str(raw)])
+    elif key.startswith("devices."):
+        d[key] = coerce(key, raw)
+        save(d)
+    elif key.startswith("cursor."):
+        d[key] = coerce(key, raw)
+        save(d)
+        write_lua(d)
+        apply_cursor(d)
+    elif key.startswith(POWERD_KEYS):
+        d[key] = coerce(key, raw)
+        save(d)
+        run([POWERD, "apply"], timeout=20)
+    elif key == "notify.dnd":
+        run(["swaync-client", "-dn" if str(raw).lower() in ("1", "true", "on") else "-df"])
+    else:
+        print(json.dumps({"ok": False, "error": "невідомий ключ " + key}, ensure_ascii=False))
+        return
+    print(json.dumps({"ok": True, "key": key, "value": raw, "msg": msg}, ensure_ascii=False))
+
+
+def on_ac():
+    for n in ("ACAD", "AC", "ADP1", "AC0"):
+        p = f"/sys/class/power_supply/{n}/online"
+        if os.path.exists(p):
+            return open(p).read().strip() == "1"
+    return False
+
+
+CURSOR_THEMES = {"Minimal": "Minimal", "Glass": "Glass (наш)", "breeze_cursors": "Breeze", "Breeze_Light": "Breeze світлий",
+                 "Adwaita": "Adwaita", "capitaine-cursors": "Capitaine", "capitaine-cursors-light": "Capitaine світлий",
+                 "Vimix-cursors": "Vimix", "Vimix-white-cursors": "Vimix білий"}
+
+
+def apply_cursor(d):
+    """Курсор: одразу в Hyprland + для нових програм (env), GTK (gsettings/settings.ini), Qt/KDE (kcminputrc), X11 (~/.icons/default)."""
+    theme = str(d.get("cursor.theme", DEFAULTS["cursor.theme"]))
+    size = int(d.get("cursor.size", DEFAULTS["cursor.size"]))
+    run(["hyprctl", "setcursor", theme, str(size)])
+    for k, v in (("XCURSOR_THEME", theme), ("XCURSOR_SIZE", str(size)), ("HYPRCURSOR_THEME", theme), ("HYPRCURSOR_SIZE", str(size))):
+        run(["hyprctl", "eval", 'hl.env("%s", "%s")' % (k, v)])
+    run(["systemctl", "--user", "set-environment", "XCURSOR_THEME=" + theme, "XCURSOR_SIZE=%d" % size])
+    run(["gsettings", "set", "org.gnome.desktop.interface", "cursor-theme", theme])
+    run(["gsettings", "set", "org.gnome.desktop.interface", "cursor-size", str(size)])
+    run(["kwriteconfig6", "--file", "kcminputrc", "--group", "Mouse", "--key", "cursorTheme", theme])
+    run(["kwriteconfig6", "--file", "kcminputrc", "--group", "Mouse", "--key", "cursorSize", str(size)])
+    for gtk in ("gtk-3.0", "gtk-4.0"):
+        f = os.path.join(HOME, ".config", gtk, "settings.ini")
+        try:
+            txt = open(f).read() if os.path.exists(f) else "[Settings]\n"
+            for key, val in (("gtk-cursor-theme-name", theme), ("gtk-cursor-theme-size", str(size))):
+                if re.search(r"^%s=" % key, txt, re.M):
+                    txt = re.sub(r"^%s=.*$" % key, "%s=%s" % (key, val), txt, flags=re.M)
+                else:
+                    txt = txt.rstrip("\n") + "\n%s=%s\n" % (key, val)
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            open(f, "w").write(txt)
+        except OSError:
+            pass
+    os.makedirs(os.path.join(HOME, ".icons/default"), exist_ok=True)
+    open(os.path.join(HOME, ".icons/default/index.theme"), "w").write("[Icon Theme]\nName=Default\nInherits=%s\n" % theme)
+
+
+def xcursor_image(path, want=32):
+    """Перший кадр потрібного розміру з файлу Xcursor → PIL.Image (RGBA)."""
+    import struct
+    from PIL import Image
+    data = open(path, "rb").read()
+    if data[:4] != b"Xcur":
+        return None
+    hsize, _, ntoc = struct.unpack_from("<III", data, 4)
+    toc = [struct.unpack_from("<III", data, hsize + i * 12) for i in range(ntoc)]
+    imgs = [t for t in toc if t[0] == 0xfffd0002]
+    if not imgs:
+        return None
+    best = min(imgs, key=lambda t: abs(t[1] - want))
+    pos = best[2]
+    _, _, _, _, w, h, _, _, _ = struct.unpack_from("<IIIIIIIII", data, pos)
+    px = data[pos + 36: pos + 36 + w * h * 4]
+    im = Image.frombuffer("RGBA", (w, h), px, "raw", "BGRA", 0, 1)
+    return im.copy()
+
+
+def cmd_cursors():
+    """Встановлені теми курсора + прев'ю (стрілка, рука, текст, очікування) для галереї в налаштуваннях."""
+    from PIL import Image
+    cache = os.path.join(HOME, ".cache/cursor-previews")
+    os.makedirs(cache, exist_ok=True)
+    seen, out = set(), []
+    for base in (os.path.join(HOME, ".local/share/icons"), os.path.join(HOME, ".icons"), "/usr/share/icons"):
+        if not os.path.isdir(base):
+            continue
+        for name in sorted(os.listdir(base)):
+            cdir = os.path.join(base, name, "cursors")
+            if name in seen or name == "default" or not os.path.isdir(cdir):
+                continue
+            seen.add(name)
+            prev = os.path.join(cache, name + ".png")
+            if not os.path.exists(prev) or os.path.getmtime(prev) < os.path.getmtime(cdir):
+                strip = Image.new("RGBA", (4 * 44, 44), (0, 0, 0, 0))
+                for i, cur in enumerate(("left_ptr", "hand2", "xterm", "watch")):
+                    for alt in (cur, {"hand2": "pointer", "xterm": "text", "watch": "wait"}.get(cur, cur)):
+                        f = os.path.join(cdir, alt)
+                        if os.path.exists(f):
+                            try:
+                                im = xcursor_image(f, 32)
+                                if im:
+                                    im.thumbnail((36, 36))
+                                    strip.alpha_composite(im, (i * 44 + (44 - im.width) // 2, (44 - im.height) // 2))
+                            except Exception:  # noqa: BLE001
+                                pass
+                            break
+                strip.save(prev)
+            out.append({"id": name, "name": CURSOR_THEMES.get(name, name.replace("-", " ").replace("_", " ")), "preview": prev})
+    out.sort(key=lambda x: ({"Minimal": 0, "Glass": 1}.get(x["id"], 2), x["name"].lower()))
+    print(json.dumps(out, ensure_ascii=False))
+
+
+def monitor_spec(name, m):
+    """Lua-рядок hl.monitor для збережених налаштувань одного монітора."""
+    if m.get("enabled") is False:
+        return 'hl.monitor({ output = "%s", disabled = true })' % name
+    parts = ['output = "%s"' % name, 'mode = "%s"' % (m.get("mode") or "preferred")]
+    pos = m.get("position") or "auto"
+    if pos == "mirror" and m.get("mirror"):
+        parts.append('mirror = "%s"' % m["mirror"])
+        parts.append('position = "auto"')
+    else:
+        parts.append('position = "%s"' % pos)
+    parts.append('scale = "%s"' % (m.get("scale") or 1))
+    if int(m.get("transform") or 0):
+        parts.append("transform = %d" % int(m["transform"]))
+    return "hl.monitor({ %s })" % ", ".join(parts)
+
+
+def cmd_monitors():
+    """Усі монітори (і вимкнені) з можливими режимами — для сторінки «Дисплеї»."""
+    _, out = run(["hyprctl", "monitors", "all", "-j"])
+    saved = load().get("monitors", {})
+    res = []
+    try:
+        for m in json.loads(out):
+            modes = []
+            for md in m.get("availableModes", []):
+                mm = re.match(r"(\d+)x(\d+)@([\d.]+)Hz", md)
+                if mm:
+                    key = "%sx%s@%d" % (mm.group(1), mm.group(2), round(float(mm.group(3))))
+                    if key not in modes:
+                        modes.append(key)
+            st = saved.get(m["name"], {})
+            res.append({
+                "name": m["name"], "desc": (m.get("make", "") + " " + m.get("model", "")).strip() or m.get("description", ""),
+                "builtin": m["name"].startswith(("eDP", "LVDS", "DSI")),
+                "enabled": not m.get("disabled", False),
+                "mode": "%dx%d@%d" % (m["width"], m["height"], round(m["refreshRate"])),
+                "modes": modes, "scale": m.get("scale", 1), "transform": m.get("transform", 0),
+                "position": st.get("position", "auto"), "mirror": m.get("mirrorOf", "none"),
+                "x": m.get("x", 0), "y": m.get("y", 0), "w": m["width"], "h": m["height"],
+            })
+    except (ValueError, KeyError):
+        pass
+    print(json.dumps(res, ensure_ascii=False))
+
+
+def cmd_display(name, raw):
+    """Змінити один монітор: JSON {enabled, mode, scale, position, transform}. Застосовується одразу й зберігається."""
+    d = load()
+    mons = d.setdefault("monitors", {})
+    cur = mons.get(name, {})
+    try:
+        cur.update(json.loads(raw))
+    except ValueError:
+        print(json.dumps({"ok": False, "error": "поганий JSON"}))
+        return
+    if cur.get("position") == "mirror":
+        _, out = run(["hyprctl", "monitors", "-j"])
+        try:
+            cur["mirror"] = next(m["name"] for m in json.loads(out) if m["name"] != name)
+        except (ValueError, StopIteration):
+            cur["position"] = "auto"
+    # не дати вимкнути останній увімкнений екран
+    if cur.get("enabled") is False:
+        _, out = run(["hyprctl", "monitors", "-j"])
+        try:
+            if len([m for m in json.loads(out) if m["name"] != name]) == 0:
+                print(json.dumps({"ok": False, "error": "це єдиний увімкнений екран"}, ensure_ascii=False))
+                return
+        except ValueError:
+            pass
+    mons[name] = cur
+    save(d)
+    write_lua(d)
+    run(["hyprctl", "eval", monitor_spec(name, cur)])
+    print(json.dumps({"ok": True}, ensure_ascii=False))
+
+
+def cmd_lid(state):
+    """Кришка (Hyprland ловить подію; logind кришку ігнорує). state: close | open."""
+    d = load()
+    lock = os.path.join(HOME, ".config/wallpapers_QS/tools/lock")
+    dpms = lambda on: run(["hyprctl", "dispatch", "hl.dsp.dpms({ action = \"%s\" })" % ("on" if on else "off")])  # noqa: E731
+    if state == "open":
+        dpms(True)
+        return
+    action = d.get("lid.ac" if on_ac() else "lid.battery", DEFAULTS["lid.ac" if on_ac() else "lid.battery"])
+    if action == "suspend":
+        subprocess.Popen(["setsid", "-f", lock])
+        run(["sleep", "0.6"])
+        run(["systemctl", "suspend"])
+    elif action == "lock":
+        subprocess.Popen(["setsid", "-f", lock])
+        dpms(False)
+    elif action == "screen":
+        dpms(False)
+    elif action == "poweroff":
+        run(["systemctl", "poweroff"])
+
+
+UK_NAMES = {"us": "Англійська (США)", "ua": "Українська", "gb": "Англійська (Британія)", "pl": "Польська",
+            "de": "Німецька", "fr": "Французька", "es": "Іспанська", "it": "Італійська", "pt": "Португальська",
+            "cz": "Чеська", "sk": "Словацька", "by": "Білоруська", "kz": "Казахська", "ge": "Грузинська",
+            "tr": "Турецька", "ro": "Румунська", "hu": "Угорська", "lt": "Литовська", "lv": "Латиська",
+            "ee": "Естонська", "fi": "Фінська", "se": "Шведська", "no": "Норвезька", "dk": "Данська",
+            "nl": "Нідерландська", "gr": "Грецька", "il": "Іврит", "ara": "Арабська", "jp": "Японська",
+            "kr": "Корейська", "cn": "Китайська", "bg": "Болгарська", "rs": "Сербська", "hr": "Хорватська",
+            "md": "Молдовська", "am": "Вірменська", "az": "Азербайджанська", "ru": "Російська"}
+
+
+def cmd_layouts():
+    """Усі розкладки XKB (код + назва); популярні — першими й українською."""
+    out = []
+    try:
+        txt = open("/usr/share/X11/xkb/rules/evdev.lst", encoding="utf-8").read()
+        sec = txt.split("! layout", 1)[1].split("!", 1)[0]
+        for line in sec.strip().splitlines():
+            code, _, desc = line.strip().partition(" ")
+            out.append({"code": code, "name": UK_NAMES.get(code, desc.strip())})
+    except (OSError, IndexError):
+        out = [{"code": k, "name": v} for k, v in UK_NAMES.items()]
+    pop = [c for c in UK_NAMES]
+    out.sort(key=lambda x: (pop.index(x["code"]) if x["code"] in pop else 999, x["name"].lower()))
+    print(json.dumps(out, ensure_ascii=False))
+
+
+def cmd_startup():
+    d = load()
+    if d.get("cursor.theme"):
+        apply_cursor(d)
+    write_idle(d)
+    restart_idle()
+    night(d)
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] == "get":
+        return cmd_get()
+    if a[0] == "set" and len(a) >= 3:
+        return cmd_set(a[1], a[2])
+    if a[0] == "startup":
+        return cmd_startup()
+    if a[0] == "layouts":
+        return cmd_layouts()
+    if a[0] == "cursors":
+        return cmd_cursors()
+    if a[0] == "monitors":
+        return cmd_monitors()
+    if a[0] == "display" and len(a) >= 3:
+        return cmd_display(a[1], a[2])
+    if a[0] == "regen":              # перегенерувати user-settings.lua (після змін на сторінці «Оформлення»)
+        return write_lua(load())
+    if a[0] == "lid" and len(a) >= 2:
+        return cmd_lid(a[1])
+    print(__doc__)
+
+
+if __name__ == "__main__":
+    main()

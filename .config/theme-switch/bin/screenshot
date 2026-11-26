@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+DIR="$HOME/Картинки/Знімки вікон"
+mkdir -p "$DIR"
+
+case "${1:-full}" in
+  full)
+    flameshot full -c -p "$DIR"
+    ;;
+  region)
+    flameshot gui
+    ;;
+esac

@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# launcher — лаунчер застосунків (wofi drun) з відновленням fullscreen.
+# Якщо меню відкрити поверх гри/фулскрін-вікна, після закриття меню вікно
+# повертається у fullscreen (Hyprland інколи знімає його, коли шар забирає фокус).
+set -uo pipefail
+UID_="$(id -u)"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID_}"
+export PATH="$PATH:/usr/local/bin:/usr/bin:/bin"
+
+# --- знайти живий інстанс Hyprland
+if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+  for d in /run/user/"$UID_"/hypr/*/; do
+    [ -S "$d/.socket.sock" ] || continue
+    s="$(basename "$d")"
+    if HYPRLAND_INSTANCE_SIGNATURE="$s" hyprctl monitors >/dev/null 2>&1; then
+      export HYPRLAND_INSTANCE_SIGNATURE="$s"; break
+    fi
+  done
+fi
+if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+  for f in /run/user/"$UID_"/wayland-*; do
+    case "$f" in *.lock) continue ;; esac
+    [ -S "$f" ] && { export WAYLAND_DISPLAY="$(basename "$f")"; break; }
+  done
+fi
+
+FS_BEFORE="$XDG_RUNTIME_DIR/launcher-fs.json"
+
+snapshot_fs() {
+  python3 - "$FS_BEFORE" <<'PY'
+import json, subprocess, sys
+out = sys.argv[1]
+try:
+    clients = json.loads(subprocess.check_output(["hyprctl", "-j", "clients"]))
+except Exception:
+    clients = []
+data = [{"address": c["address"], "fs": c.get("fullscreen", 0),
+         "class": c.get("class", "")} for c in clients if c.get("fullscreen", 0)]
+json.dump(data, open(out, "w"))
+PY
+}
+
+restore_fs() {
+  python3 - "$FS_BEFORE" <<'PY'
+import json, subprocess, sys, time, os
+path = sys.argv[1]
+if not os.path.exists(path):
+    raise SystemExit
+try:
+    saved = json.load(open(path))
+except Exception:
+    raise SystemExit
+if not saved:
+    raise SystemExit
+def clients():
+    try:
+        return json.loads(subprocess.check_output(["hyprctl", "-j", "clients"]))
+    except Exception:
+        return []
+def hypr(*args):
+    subprocess.run(["hyprctl", *args], capture_output=True)
+cur = {c["address"]: c for c in clients()}
+todo = [s for s in saved if s["address"] in cur and cur[s["address"]].get("fullscreen", 0) == 0]
+for item in todo:
+    hypr("dispatch", f'hl.dsp.window.focus({{window="{item["address"]}"}})')
+    time.sleep(0.12)
+    for _ in range(item["fs"]):
+        hypr("dispatch", "hl.dsp.window.fullscreen()")
+        time.sleep(0.12)
+PY
+  rm -f "$FS_BEFORE"
+}
+
+snapshot_fs
+# --- меню: використовуємо ~/.config/wofi/style.css (керується темами, з іконками)
+# ВАЖЛИВО: не передавати --style з іншим файлом — тоді wofi губить іконки застосунків.
+wofi --show drun --width 640 --height 460
+# --- повернути fullscreen, якщо він злетів
+restore_fs

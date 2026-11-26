@@ -1,0 +1,319 @@
+// ╔══════════════════════════════════════════════════════════════════╗
+// ║  Desktop pet (Quickshell + Hyprland)                              ║
+// ║  Керування:  qs -p .../shell.qml ipc call pet <команда>           ║
+// ║    toggle, show, hide, poke, restart, stopwatch, stoptimer,       ║
+// ║    say "текст", timer 25, action dance                            ║
+// ║  Файл перечитується сам після збереження. Можна писати коментарі  ║
+// ║  (// і /* */) і кому після останнього елемента. Помилка в файлі — ║
+// ║  лишаються попередні налаштування, а що не так, видно в консолі.  ║
+// ╚══════════════════════════════════════════════════════════════════╝
+//
+// Шляхи до файлів: відносні (від папки з shell.qml), "~/..." або "/абсолютні".
+
+{
+  // ═══════════════════ PET ═══════════════════
+  "name": "Zhao",              // ім'я (видно у сповіщенні таймера)
+  "scale": 1.75,                // розмір: 1.0 = 96 px (з новими спрайтами 1.75 ≈ колишні 2.0)
+  "footPadding": 0,            // порожнеча під ногами в спрайті, px (щоб стояла на землі, а не над нею)
+  // "facing": "left",         // куди дивиться спрайт у файлі (за замовчуванням вправо)
+  // "pixelArt": true,         // без згладжування при масштабуванні
+
+  "peaceful": false,           // false = hardcore: від сильного удару розлітається на шматочки
+  "alwaysOnTop": true,         // true = навіть над повноекранними вікнами
+
+
+  // ═══════════════════ ФІЗИКА ═══════════════════
+  "physics": {
+    "gravity": 1200,           // px/с²
+    "bounce": 0.35,            // відскок від підлоги (0..1)
+    "wallBounce": 0.55,        // від стін
+    "ceilingBounce": 0.5,      // від стелі
+    "friction": 0.97,          // тертя об землю (за кадр, ближче до 1 = довше ковзає)
+    "airDrag": 0.985,          // опір повітря
+
+    "throwThreshold": 250,     // від якої швидкості відпускання — це кидок, а не «поставили»
+    "throwBoost": 0.7,         // множник швидкості кидка
+    "maxThrowSpeed": 2400,
+
+    "spinFactor": 0.65,        // наскільки сильно крутиться від кидків і ударів
+    "spinAccel": 0.9,
+    "spinDamping": 0.98        // як швидко обертання затухає в повітрі
+  },
+
+
+  // ═══════════════════ ПРОГУЛЯНКИ ═══════════════════
+  "wander": {
+    "enabled": true,
+    "intervalMs": [2000, 15000],   // пауза між прогулянками: від .. до, мс
+    "speed": 140,                  // px/с
+    "hopChance": 0.25,             // шанс підстрибнути на старті (0..1)
+    "hopSpeed": 340,
+    "rotateChance": 0.0            // шанс котитися колесом, а не йти
+    // "workspaceTravel": { "enabled": true, "chance": 0.12, "speed": 260 }   // сама бігає на сусідні столи
+  },
+
+
+  // ═══════════════════ HARDCORE (якщо peaceful: false) ═══════════════════
+  "hardcore": {
+    "shatterSpeed": 2300,          // від якої швидкості удару об стіну/стелю розбивається
+    // "shatterOnFloor": true,     // розбиватись і від удару об підлогу
+    "pieceCount": 30,
+    "pieceLifetimeMs": 10000,
+    "burstForce": 1.0,             // сила розльоту
+    "splatterEnabled": true,
+    "splatterColor": "#d90429",
+    "dropsPerPiece": 3,
+    "dropLifetimeMs": 10000,
+    "fullRestart": false           // true = після розльоту перезапустити весь qs
+  },
+
+
+  // ═══════════════════ СПРАЙТИ ═══════════════════
+  // стани: idle, walk, drag, fly; необов'язкові: happy, dance, sleep, music
+  // (якщо стану нема — показується idle)
+  // "frames": ["a.png", "b.png", ...] + "fps", або один gif
+  "sprites": {
+    // очищені анімації (tools/clean_sprites.py): м'який край, без «сміття», однаковий масштаб і кольори;
+    // оригінальні GIF — у sprites/original/
+    "idle": { "gif": "sprites/zhao_idle.webp", "fps": 30 },
+    "walk": { "gif": "sprites/zhao_walk.webp", "fps": 30 },
+    "drag": { "gif": "sprites/zhao_idle.webp", "fps": 30 },
+    "fly":  { "gif": "sprites/zhao_idle.webp", "fps": 30 }
+  },
+
+
+  // ═══════════════════ ЗВУКИ ═══════════════════
+  // Події: onPick, onDrop, onThrow, onShatter, onLand, onPoke, onTimer, onTravel
+  // Кожна: { "volume": 0..2, "files": [...] }
+  //   останній елемент "random" — грає один випадковий; "all" — усі разом
+  "sounds": {
+    "volume": 0.4,                 // загальна гучність
+    // "maxVoices": 4,             // скільки звуків одночасно
+    // "interrupt": true,          // нова подія обриває старий голос
+
+    "onPick": {                    // підхопили (тягнуть)
+      "volume": 0.4,
+      "files": [
+        "sounds/VO_Zhao_Quality_Time_Surprised_01.ogg",
+        "sounds/VO_Zhao_Quality_Time_Surprised_02.ogg",
+        "sounds/VO_Zhao_Quality_Time_Surprised_03.ogg",
+        "random"
+      ]
+    },
+
+    "onDrop": {                    // поставили
+      "volume": 0.4,
+      "files": [
+        "sounds/VO_Zhao_Quality_Time_Doubt_01.ogg",
+        "sounds/VO_Zhao_Quality_Time_Doubt_02.ogg",
+        "sounds/VO_Zhao_Quality_Time_Doubt_03.ogg",
+        "random"
+      ]
+    },
+
+    "onThrow": {                   // кинули
+      "volume": 0.4,
+      "files": [
+        "sounds/VO_Zhao_Quality_Time_Laugh_01.ogg",
+        "sounds/VO_Zhao_Quality_Time_Laugh_02.ogg",
+        "sounds/VO_Zhao_Quality_Time_Laugh_03.ogg",
+        "random"
+      ]
+    },
+
+    "onShatter": {                 // розбилась (грають обидва разом)
+      "volume": 0.4,
+      "files": [
+        "sounds/dead_2.mp3",
+        "sounds/scream_1.mp3"
+      ]
+    },
+
+    // випадкові фрази, поки нічого не відбувається
+    "randomReactions": {
+      "volume": 0.4,
+      "randomIntervalMs": [1000, 60000],   // пауза між фразами: від .. до, мс
+      "files": [
+        "sounds/VO_Zhao_Quality_Time_Doubt_01.ogg",
+        "sounds/VO_Zhao_Quality_Time_Doubt_02.ogg",
+        "sounds/VO_Zhao_Quality_Time_Doubt_03.ogg",
+        "sounds/VO_Zhao_Quality_Time_Godfinger_01.ogg",
+        "sounds/VO_Zhao_Quality_Time_Godfinger_Kill_01.ogg",
+        "sounds/VO_Zhao_Quality_Time_Idle_01.ogg",
+        "sounds/VO_Zhao_Quality_Time_Idle_02.ogg",
+        "sounds/VO_Zhao_Quality_Time_Introduction_01.ogg",
+        "sounds/VO_Zhao_Quality_Time_Introduction_04.ogg",
+        "sounds/VO_Zhao_Quality_Time_Laugh_01.ogg",
+        "sounds/VO_Zhao_Quality_Time_Laugh_02.ogg",
+        "sounds/VO_Zhao_Quality_Time_Laugh_03.ogg",
+        "sounds/VO_Zhao_Quality_Time_Surprised_01.ogg",
+        "sounds/VO_Zhao_Quality_Time_Surprised_02.ogg",
+        "sounds/VO_Zhao_Quality_Time_Surprised_03.ogg",
+        "sounds/VO_Zhao_Quality_Time_Take_Photo_02.ogg"
+      ]
+    }
+  },
+
+
+  // ═══════════════════ МЕНЮ (правий клік по кішці) ═══════════════════
+  // "cmd": команда (рядок або { "sh": ["рядок", ...] })  або  "action": дія
+  // дії: poke, dance, sleep, wake, hop, flip, shatter, hide, restart, quit,
+  //      stopwatch, stoptimer, timer:25, say:текст, travel / travel:left / travel:right
+  "menu": [
+    { "label": "💗 Погладити",    "action": "poke" },
+    { "label": "💬 Поговорити",   "action": "chat" },
+    { "label": "🗑️ Очистити історію", "action": "deleteHistory" },
+    { "label": "Танцювати",       "action": "dance" },
+    { "label": "Спати",           "action": "sleep" },
+    { "label": "Таймер 25 хв",    "action": "timer:25" },
+    { "label": "Секундомір",      "action": "stopwatch" },
+    { "label": "Стоп таймер",     "action": "stoptimer" },
+    { "label": "Конфіг",          "cmd": "code ~/.config/wallpapers_QS/bg_pet/pet.json" },
+    { "label": "󰑓 Перезапуск", "action": "restart" },
+    { "label": "󰐥 Сховати", "action": "hide" }
+  ],
+
+
+  // ═══════════════════ МОЗОК (локальна LLM через Ollama) ═══════════════════
+  // "enabled": false — мозку нема зовсім: ні чату, ні журналу, ні вільної волі, ні скрінів
+  // (пет поводиться рівно як раніше). Промпти англійською; відповідає тією мовою, якою пишеш ти.
+  // Підготовка один раз:
+  //   sudo pacman -S ollama-cuda && sudo systemctl enable --now ollama
+  //   ollama pull ifm/k2-horizon:0.9b
+  // Поговорити: меню → «💬 Поговорити»  або  qs -p .../shell.qml ipc call pet ask "як справи?"
+  "brain": {
+    "enabled": true,
+    "url": "http://127.0.0.1:11434",
+    "model": "qwen3.5-pet",   // qwen3.5:4b + 32 шари на GPU (GTX 1650); бачить картинки, вміє tools
+    "think": false,                    // false = відповідає одразу, без «міркувань» (у reasoning-моделей)
+    "maxTokens": 120,                  // довжина відповіді (бульбашка не безрозмірна)
+    "temperature": 0.6,                // 0 = нудно й передбачувано, 1+ = хаос (нижче — надійніше викликає команди)
+    "history": 6,                      // скільки останніх реплік бачить модель (щоб відповідала швидко)
+    "toolSteps": 5,                    // скільки разів поспіль може викликати інструменти за одну відповідь
+
+    // файл історії поруч із pet.json — після перезапуску вона пам'ятає розмову ("" = не зберігати)
+    "historyFile": "chat_history.json",
+    "historyKeep": 500,                // скільки записів тримати у файлі
+
+    // події в історію: погладили, підхопили, кинули, поставили, гепнулась, танцює, заснула,
+    // трек, таймер, робочі столи, програми, скріни, 💀 смерть (з причиною) і ✨ воскресіння
+    "logEvents": true,
+    "eventsInContext": true,           // останні події бачить і модель — може про них згадати
+    "eventsContext": 5,                // скільки останніх подій давати моделі
+    "keepAlive": "1m",                 // через хвилину без розмови модель вивантажується з відеопам'яті
+    "timeoutMs": 90000,
+    // "system": "Ти — {name}, ...",   // свій характер; {name} заміниться на ім'я з "name"
+
+    // що сказати, якщо відповідь вийшла порожня (напр. був лише тег [run:htop]);
+    // одна фраза або список — тоді щоразу випадкова ("" або [] — промовчати)
+    "emptyReply": ["…meow?", "Nya!", "Done~", "Mrrp :3"],
+
+    // ── вільна воля: сама вирішує, чим зайнятися ──
+    "autonomy": {
+      "enabled": true,
+      "useModel": false,               // false — вільна воля навмання, без моделі (Ollama не працює в простої)
+      "intervalMs": [90000, 300000],   // як часто думає, що робити: від 1.5 до 5 хв
+      "inChat": true,                  // у розмові може сама щось зробити (дописує тег [dance] тощо)
+      "fallbackRandom": true,          // якщо модель не відповіла / сказала дурницю — обирає навмання
+      // що їй ДОЗВОЛЕНО (білий список). Можливі: dance, sleep, wake, hop, flip, travel, look, say, nothing,
+      // а також poke, hide, shatter — якщо не шкода 💀
+      "actions": ["dance", "sleep", "wake", "hop", "flip", "travel", "say", "nothing", "poke", "shatter"]   // "look" прибрано: сама не підглядає, лише на прохання
+    },
+
+    // ── програми, які вона може відкрити, коли ти попросиш («відкрий htop») ──
+    // Лише з цього списку! Модель пише [run:htop], і запускається рівно те, що тут.
+    //   масив = програма + аргументи, рядок = shell-команда, { "cmd": ..., "desc": "опис для моделі" }
+    "commands": {
+      // програми
+      "browser":     { "cmd": "google-chrome-stable", "desc": "web browser (Google Chrome)", "aliases": ["хром", "chrome", "браузер", "гугл", "google", "інтернет"] },
+      "telegram":    { "cmd": "Telegram", "desc": "Telegram messenger", "aliases": ["телеграм", "телега", "телегу", "telegram", "тг"] },
+      "discord":     { "cmd": "discord", "desc": "Discord", "aliases": ["діскорд", "дискорд", "discord"] },
+      "steam":       { "cmd": "steam", "desc": "Steam, games", "aliases": ["стім", "steam", "ігри"] },
+      "files":       { "cmd": "dolphin", "desc": "file manager", "aliases": ["файли", "провідник", "dolphin", "папки"] },
+      "terminal":    { "cmd": "kitty", "desc": "terminal", "aliases": ["термінал", "консоль", "terminal", "kitty"] },
+      "vscode":      { "cmd": "code", "desc": "Visual Studio Code editor", "aliases": ["vs code", "вскод", "візуал студіо", "код", "code"] },
+      "notes":       { "cmd": "kate", "desc": "text editor", "aliases": ["блокнот", "kate", "кейт", "редактор"] },
+      "htop":        { "cmd": "setsid -f missioncenter", "desc": "task manager: processes, CPU, RAM, GPU graphs", "aliases": ["процеси", "btop", "htop", "диспетчер"] },
+      "settings":    { "cmd": "~/.config/theme-switch/bin/hypr-settings", "desc": "desktop settings", "aliases": ["налаштування", "settings"] },
+      "sound":       { "cmd": "pavucontrol", "desc": "sound settings / mixer", "aliases": ["мікшер", "звук", "pavucontrol"] },
+      "bluetooth":   { "cmd": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle bt", "desc": "bluetooth devices window", "aliases": ["блютуз", "bluetooth"] },
+      "network":     { "cmd": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle net", "desc": "network / internet window", "aliases": ["мережу", "інтернет", "вайфай"] },
+      "system_info": { "cmd": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle sys", "desc": "battery, CPU, RAM, processes window" },
+      "youtube":     { "cmd": "xdg-open https://youtube.com", "desc": "YouTube in the browser", "aliases": ["ютуб", "youtube"] },
+      // прості дії
+      "volume_up":   { "cmd": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 10%+", "desc": "make sound louder" },
+      "volume_down": { "cmd": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 10%-", "desc": "make sound quieter" },
+      "mute":        { "cmd": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle", "desc": "mute / unmute sound" },
+      "play_pause":  { "cmd": "playerctl play-pause", "desc": "pause or resume music/video" },
+      "next_track":  { "cmd": "playerctl next", "desc": "next song" },
+      "prev_track":  { "cmd": "playerctl previous", "desc": "previous song" },
+      "brighter":    { "cmd": "brightnessctl set 10%+", "desc": "screen brighter" },
+      "darker":      { "cmd": "brightnessctl set 10%-", "desc": "screen darker" },
+      "screenshot":  { "cmd": "sleep 0.5; hyprshot -m output -m active -o \"$HOME/Картинки/Знімки вікон\"", "desc": "take a screenshot of the whole screen", "aliases": ["скрін", "скріншот"] },
+      "game_mode":   { "cmd": "~/.config/wallpapers_QS/tools/gamemode toggle", "desc": "toggle game mode", "aliases": ["ігровий режим"] },
+      "notifications": { "cmd": "swaync-client -t -sw", "desc": "open notifications", "aliases": ["сповіщення"] }
+    },
+
+    // ── скріншот екрана → у модель (потрібна модель із зором і grim: sudo pacman -S grim) ──
+    // Коли: меню «👀 Глянь на екран», дія "look" у вільній волі, тег [look] у розмові, і події з onEvents.
+    // Скрін іде лише в локальну Ollama (url вище) і на диск не пишеться.
+    "look": {
+      "enabled": true,
+      "inChat": false,                 // false = скрін лише коли попросиш («що в мене на екрані?»); true = до КОЖНОГО повідомлення (повільно)
+      "scale": 0.35,                   // зменшення скріна: 0.35 ≈ 9 с на відповідь, 0.5 ≈ 18 с (GTX 1650)
+      "quality": 70,                   // якість JPEG
+      "onEvents": [],                  // після яких подій дивитись сама: "workspace", "music", "death", "throw", "run"...
+      "cooldownMs": 12000             // не частіше ніж раз на 2 хв
+    },
+
+    "commentTracks": false,            // true — коментує кожен новий трек (кличе модель на кожну пісню)
+    "chatter": {                       // іноді щось каже сама
+      "enabled": false,
+      "intervalMs": [300000, 900000]   // від 5 до 15 хв
+    }
+  },
+
+  // кольори меню, бульбашки й таймера (необов'язково)
+  "menuTheme": { "bg": "#1a1b26", "border": "#7aa2f7", "text": "#c0caf5", "hover": "#333856", "font": "JetBrainsMono Nerd Font" },
+
+
+  // ═══════════════════ ЕФЕКТИ ═══════════════════
+  "effects": {
+    "shadow": true,            // тінь під кішкою
+    "squash": true,            // стискається/розтягується
+    "hearts": true,            // сердечка, коли гладиш
+    "heartColor": "#ff5d8f",
+    "sleepAfterMs": 0          // засинає після стількох мс спокою (0 = ніколи)
+  },
+
+
+  // ═══════════════════ ВІКНА ЯК ПЛАТФОРМИ ═══════════════════
+  "platforms": {
+    "enabled": true,           // ходить по верхніх краях вікон
+    "refreshMs": 400,          // як часто оновлювати список вікон
+    "edgeFall": true,          // падає, щойно центр вийшов за край вікна
+    "wanderOffChance": 0.25    // шанс, що сама зійде з вікна під час прогулянки
+  },
+
+
+  // ═══════════════════ МУЗИКА (MPRIS) ═══════════════════
+  "music": {
+    "enabled": true,           // пританцьовує, коли щось грає
+    "announceTracks": true,    // показує назву нового треку
+    "beatMs": 520,             // темп пританцьовування
+    "hopChance": 0.0,
+    "noteColor": "#7dcfff"
+  },
+
+
+  // ═══════════════════ РОБОЧІ СТОЛИ HYPRLAND ═══════════════════
+  "workspaces": {
+    "throwToSwitch": true,     // сильний кидок убік перемикає стіл
+    "throwSwitchSpeed": 1900,  // від якої горизонтальної швидкості кидка
+
+    "enterOnSwitch": true,     // перемкнув стіл — вона вибігає з краю екрана
+    "enterOffset": 30,         // наскільки далеко за краєм стартує, px
+    "enterSpeed": 260,         // px/с
+    "invertSide": false        // поміняти сторони, з яких вибігає
+  }
+}

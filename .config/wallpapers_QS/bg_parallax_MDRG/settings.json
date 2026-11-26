@@ -1,0 +1,387 @@
+// Згенеровано tools/theme з settings.base.jsonc + тема «Зоряні гори». Правити треба settings.base.jsonc / themes.json.
+{
+  "parallax": {
+    "layers": [
+      {
+        "file": "./assets/parallax_backgrounds/mountains/layer00.png",
+        "crop": true,
+        "depth": 0.002
+      },
+      {
+        "file": "./assets/parallax_backgrounds/mountains/layer00m.png",
+        "crop": true,
+        "depth": 0.002
+      },
+      {
+        "file": "./assets/parallax_backgrounds/mountains/layer01.png",
+        "crop": true,
+        "depth": 0.141
+      },
+      {
+        "file": "./assets/parallax_backgrounds/mountains/layer02.png",
+        "crop": true,
+        "depth": 0.217
+      },
+      {
+        "file": "./assets/parallax_backgrounds/mountains/layer03.png",
+        "crop": true,
+        "depth": 0.3
+      },
+      {
+        "file": "./assets/parallax_backgrounds/mountains/layer04.png",
+        "crop": true,
+        "depth": 0.425
+      },
+      {
+        "file": "./assets/parallax_backgrounds/mountains/layer05.png",
+        "crop": true,
+        "depth": 0.541
+      },
+      {
+        "file": "./assets/parallax_backgrounds/mountains/layer06.png",
+        "crop": true,
+        "depth": 0.826
+      }
+    ],
+    "strength": 20,
+    "invert": false,
+    "smoothMs": 150,
+    "pollMs": 33
+  },
+  "visualizer": {
+    "enabled": true,
+    "afterLayer": 0,
+    "bars": {
+      "count": 128,
+      "bidirectional": false,
+      "maxHeight": 260,
+      "spacing": 3,
+      "overflow": 0,
+      "offsetY": -340,
+      "radius": 3,
+      "opacity": 0.85,
+      "gain": 1.4,
+      "colorTop": "#eef2ff",
+      "colorBottom": "#5a78d6",
+      "segment": 0,
+      "segmentGap": 3,
+      "peaks": false,
+      "peakFall": 0.8,
+      "fade": false,
+      "ridge": [
+        0.7171,
+        0.7215,
+        0.7215,
+        0.7171,
+        0.718,
+        0.7144,
+        0.7117,
+        0.7099,
+        0.7091,
+        0.7082,
+        0.7055,
+        0.7019,
+        0.6993,
+        0.693,
+        0.6895,
+        0.6868,
+        0.6842,
+        0.6815,
+        0.6806,
+        0.677,
+        0.6735,
+        0.6512,
+        0.6379,
+        0.637,
+        0.629,
+        0.6228,
+        0.6183,
+        0.6201,
+        0.621,
+        0.6201,
+        0.6165,
+        0.613,
+        0.6094,
+        0.6076,
+        0.605,
+        0.5996,
+        0.5934,
+        0.5916,
+        0.5916,
+        0.5916,
+        0.597,
+        0.6014,
+        0.6014,
+        0.5996,
+        0.5979,
+        0.589,
+        0.5836,
+        0.5783,
+        0.5729,
+        0.5676,
+        0.5623,
+        0.5587,
+        0.5543,
+        0.5463,
+        0.5454,
+        0.5374,
+        0.5187,
+        0.5098,
+        0.4973,
+        0.4858,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4848,
+        0.4884,
+        0.4991,
+        0.5125,
+        0.5231,
+        0.532,
+        0.5409,
+        0.5436,
+        0.5525,
+        0.5605,
+        0.5712,
+        0.5765,
+        0.5792,
+        0.5827,
+        0.5863,
+        0.589,
+        0.5925,
+        0.5934,
+        0.5925,
+        0.5925,
+        0.5934,
+        0.5979,
+        0.6076,
+        0.6201,
+        0.6254,
+        0.6317,
+        0.6361,
+        0.6388,
+        0.645,
+        0.6512,
+        0.6566,
+        0.6628,
+        0.6655,
+        0.6708,
+        0.6815,
+        0.6904,
+        0.6957,
+        0.7055,
+        0.7162,
+        0.7233,
+        0.7322,
+        0.7393,
+        0.7446,
+        0.7562,
+        0.7624,
+        0.7464,
+        0.7438,
+        0.7722,
+        0.7749,
+        0.7784,
+        0.7811,
+        0.782,
+        0.782,
+        0.7802,
+        0.7847,
+        0.7758
+      ],
+      "sink": 14
+    },
+    "glow": {
+      "enabled": true,
+      "opacity": 0.85,
+      "blur": 1.0,
+      "radius": 48
+    },
+    "cava": {
+      "framerate": 60,
+      "noiseReduction": 77,
+      "input": "pipewire",
+      "source": "auto"
+    }
+  },
+  "clock": {
+    "enabled": true,
+    "afterLayer": 1,
+    "zOffset": 0.1,
+    "x": 960,
+    "y": 300,
+    "anchor": "center",
+    "format": "hh:mm:ss",
+    "color": "#e8d5e3",
+    "font": {
+      "family": "Comfortaa",
+      "size": 280,
+      "weight": 700,
+      "style": "Bold"
+    }
+  },
+  "player": {
+    "enabled": true,
+    "afterLayer": 11,
+    "x": 860,
+    "y": 690,
+    "width": 200,
+    "height": 350,
+    "stack": {
+      "direction": "both-horizontal",
+      "spacing": 20,
+      "maxCards": 0,
+      "hideWhenIdle": true,
+      "hideStopped": true,
+      "dedupe": true,
+      "ignore": []
+    },
+    "show": {
+      "cover": true,
+      "time": true
+    },
+    "colors": {
+      "background": "#1d3a6b",
+      "backgroundAlpha": 0.35,
+      "border": "#a8cfff",
+      "borderAlpha": 0.35,
+      "text": "#dce4f7",
+      "titleAlpha": 1.0,
+      "artistAlpha": 0.72,
+      "timeAlpha": 0.6,
+      "cover": "#2a3f6e",
+      "coverAlpha": 0.2,
+      "progress": "#8cc8ff",
+      "progressAlpha": 1.0,
+      "progressTrackAlpha": 0.25,
+      "button": "#2a3f6e",
+      "buttonAlpha": 0.26,
+      "buttonBorderAlpha": 0.35,
+      "icon": "#dce4f7",
+      "iconAlpha": 1.0
+    },
+    "sizes": {
+      "cardRadius": 28,
+      "borderWidth": 1,
+      "coverMargin": 24,
+      "coverRadius": 18,
+      "titleSize": 16,
+      "artistSize": 13,
+      "timeSize": 11,
+      "iconSize": 26,
+      "playIconSize": 24,
+      "playButtonSize": 54,
+      "buttonSpacing": 22,
+      "buttonsBottomMargin": 18,
+      "progressHeight": 4,
+      "seekKnobSize": 12,
+      "idleIconSize": 90,
+      "idleTextSize": 16
+    },
+    "text": {
+      "fontFamily": "",
+      "idleText": "Нічого не грає",
+      "idleIcon": "♪",
+      "coverPlaceholder": "♪",
+      "unknownTrack": "Невідомий трек"
+    },
+    "collapse": {
+      "enabled": true,
+      "startCollapsed": false,
+      "height": 96,
+      "hideButtonSize": 24,
+      "hideButtonAlwaysVisible": false,
+      "hideIcon": "−",
+      "expandIcon": "+",
+      "holdAllMs": 1000,
+      "iconSize": 18,
+      "playButtonSize": 28,
+      "playIconSize": 14,
+      "buttonsBottomMargin": 8
+    },
+    "behavior": {
+      "keepPausedOnSkip": true
+    },
+    "timing": {
+      "pollMs": 1000
+    },
+    "animation": {
+      "enabled": true,
+      "appearMs": 500,
+      "fadeMs": 300,
+      "collapseMs": 350,
+      "trackChangeMs": 260,
+      "trackSlidePx": 40,
+      "buttonAnimMs": 180,
+      "hoverScale": 1.12,
+      "pressScale": 0.86,
+      "progressAnimMs": 1000,
+      "idlePulse": true
+    },
+    "volume": {
+      "enabled": false,
+      "alwaysVisible": false,
+      "wheel": true,
+      "wheelStep": 0.05,
+      "height": 28,
+      "margin": 10,
+      "background": "#16223d",
+      "backgroundAlpha": 0.55
+    }
+  },
+  "widgets": {
+    "enabled": false,
+    "items": [
+      {
+        "type": "image",
+        "source": "./assets/gifs/mimi_spining.gif",
+        "x": 1470,
+        "y": 860,
+        "height": 200,
+        "anchor": "center",
+        "atLayer": 8,
+        "opacity": 1.0,
+        "onClick": {
+          "left": "notify-send 'THE MIMI!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' & mpv --no-video --really-quiet ./assets/sounds/cute-squeaky-toy-noise.mp3",
+          "right": [
+            "kitty",
+            "-e",
+            "htop"
+          ]
+        }
+      },
+      {
+        "type": "video",
+        "source": "~/Відео/clip.mp4",
+        "x": 100,
+        "y": 600,
+        "width": 480,
+        "afterLayer": 7,
+        "volume": 0.6,
+        "muted": false,
+        "loop": false,
+        "controls": {
+          "pause": true,
+          "seek": true,
+          "volume": true,
+          "always": false
+        }
+      }
+    ]
+  },
+  "cursor": {
+    "enabled": true,
+    "mode": "idle",
+    "hideAfterMs": 3000,
+    "instantMs": 60
+  }
+}

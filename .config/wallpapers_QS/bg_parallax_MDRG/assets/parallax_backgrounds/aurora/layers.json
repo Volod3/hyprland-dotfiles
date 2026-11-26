@@ -1,0 +1,36 @@
+{
+ "layers": [
+  {
+   "file": "./assets/parallax_backgrounds/aurora/layer00.png",
+   "crop": true,
+   "depth": 0.02
+  },
+  {
+   "file": "./assets/parallax_backgrounds/aurora/layer01.png",
+   "crop": true,
+   "depth": 0.06,
+   "speed": 6
+  },
+  {
+   "file": "./assets/parallax_backgrounds/aurora/layer02.png",
+   "crop": true,
+   "depth": 0.25
+  },
+  {
+   "file": "./assets/parallax_backgrounds/aurora/layer03.png",
+   "crop": true,
+   "depth": 0.45
+  },
+  {
+   "file": "./assets/parallax_backgrounds/aurora/layer04.png",
+   "crop": true,
+   "depth": 0.65
+  },
+  {
+   "file": "./assets/parallax_backgrounds/aurora/layer05.png",
+   "crop": true,
+   "depth": 0.95
+  }
+ ],
+ "strength": 30
+}

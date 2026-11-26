@@ -1,0 +1,156 @@
+{
+  "enabled": true,
+  "name": "ZaZe0",
+  "avatar": "~/Картинки/nn_shit/mimi-typh-mimi.gif",
+  "avatarAnimated": true,
+  "side": "left",
+  "width": 480,
+  "top": 56,
+  "bottom": 10,
+  "slideMs": 320,
+  "opacity": 0.9,
+  "iconFont": "JetBrainsMono Nerd Font",
+
+  "morningTime": "06:00-11:59",
+  "greetMorning": "Доброго ранку, ня",
+  "dayTime": "12:00-17:59",
+  "greetDay": "Привіт-няв",
+  "eveningTime": "18:00-22:59",
+  "greetEvening": "Добрий вечір, мур",
+  "nightTime": "23:00-05:59",
+  "greetNight": "Тихої ночі",
+  "greetFallback": "Мяу-привіт",
+  "greetFormat": "{greeting}, {name}!",
+
+  "info": [
+    "uptime",
+    { "preset": "battery", "label": "Bat" },
+    { "preset": "time" }
+  ],
+
+  "colors": {
+    "background": "#001028",
+    "accent": "#0088e6",
+    "onAccent": "#2a1650",
+    "text": "#ece6f6",
+    "tile": "#ffffff",
+    "border": "#00f0ff"
+  },
+  "actions": [
+    {
+      "icon": "\uf0f3",
+      "cmd": "swaync-client -t -sw"
+    },
+    {
+      "icon": "\uf011",
+      "cmd": "~/.config/waybar/powermenu.sh"
+    }
+  ],
+
+  "grid": {
+    "columns": 4,
+    "gap": 8,
+    "rowHeight": 72
+  },
+
+  "presets": {
+    "wifi": {
+      "title": "Wi-Fi",
+      "icon": "\uf1eb",
+      "align": "center",
+      "stateCmd": "if [ \"$(nmcli radio wifi)\" = enabled ]; then echo on; nmcli -t -f active,ssid dev wifi 2>/dev/null | awk -F: '$1==\"yes\"{print $2; exit}'; else echo off; echo Off; fi",
+      "toggleCmd": "if [ \"$(nmcli radio wifi)\" = enabled ]; then nmcli radio wifi off; else nmcli radio wifi on; fi",
+      "rightCmd": "nm-connection-editor"
+    },
+    "bluetooth": {
+      "title": "Bluetooth",
+      "icon": "\uf294",
+      "align": "center",
+      "stateCmd": "if rfkill list bluetooth | grep -q 'Soft blocked: no'; then echo on; command -v bluetoothctl >/dev/null 2>&1 && bluetoothctl devices Connected 2>/dev/null | head -n1 | cut -d' ' -f3-; else echo off; echo Off; fi",
+      "toggleCmd": "if rfkill list bluetooth | grep -q 'Soft blocked: no'; then rfkill block bluetooth; else rfkill unblock bluetooth; fi",
+      "rightCmd": "blueman-manager"
+    },
+    "output": {
+      "title": "Output",
+      "icon": "\uf025",
+      "align": "center",
+      "closeOnClick": true,
+      "stateCmd": "echo off; wpctl inspect @DEFAULT_AUDIO_SINK@ | grep -m1 'node.description' | cut -d'\"' -f2",
+      "toggleCmd": "pavucontrol"
+    },
+    "mic": {
+      "title": "Microphone",
+      "icon": "\uf130",
+      "align": "center",
+      "stateCmd": "if wpctl get-volume @DEFAULT_AUDIO_SOURCE@ | grep -q MUTED; then echo off; echo Muted; else echo on; echo On; fi",
+      "toggleCmd": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"
+    },
+    "power": {
+      "title": "Power",
+      "icon": "\uf24e",
+      "align": "center",
+      "stateCmd": "p=$(powerprofilesctl get 2>/dev/null || echo 'balanced'); case \"$p\" in performance) s='performance';; power-saver) s='power-saver';; *) s='balanced';; esac; echo \"$s,$p\"",
+      "toggleCmd": "~/.config/waybar/powerprofile.sh"
+    },
+    "screenshot": {
+      "title": "Screenshot",
+      "icon": "\uf030",
+      "align": "center",
+      "closeOnClick": true,
+      "requires": "hyprshot",
+      "stateCmd": "echo off; echo Region",
+      "toggleCmd": "sleep 0.45; hyprshot -m region --freeze -o \"$HOME/Картинки/Знімки вікон\""
+    },
+    "steam": {
+      "title": "Steam",
+      "icon": "",
+      "align": "center",
+      "closeOnClick": true,
+      "run": "steam"
+    },
+    "discord": {
+      "title": "Discord",
+      "icon": "",
+      "align": "center",
+      "closeOnClick": true,
+      "run": "discord"
+    },
+    "dolphin": {
+      "title": "Dolphin",
+      "icon": "󱢴",
+      "align": "center",
+      "closeOnClick": true,
+      "run": "dolphin"
+    },
+    "pet": {
+      "title": "Pet",
+      "icon": "",
+      "align": "center",
+      "closeOnClick": true,
+      "run": "qs -p /home/zaze0/.config/wallpapers_QS/bg_pet/shell.qml ipc call pet toggle"
+    }
+  },
+
+  "items": [
+    { "id": "wifi",       "row": 1, "col": 1, "span": 2 },
+    { "id": "bluetooth",  "row": 1, "col": 3, "span": 2 },
+
+    { "id": "power",      "row": 2, "col": 1, "span": 2 },
+    { "id": "mic",        "row": 2, "col": 3, "span": 2 },
+
+    { "id": "output",     "row": 3, "col": 1, "span": 2 },
+    { "id": "screenshot", "row": 3, "col": 3, "span": 2 },
+
+    { "id": "steam",      "row": 4, "col": 1, "span": 2 },
+    { "id": "discord",    "row": 4, "col": 3, "span": 2 },
+
+    { "id": "dolphin",    "row": 5, "col": 1, "span": 4 },
+    { "id": "pet",    "row": 6, "col": 1, "span": 4 }
+  ],
+
+  "sections": [
+    { "type": "tiles" },
+    { "type": "sliders", "items": ["volume", "mic", "brightness"] },
+    { "type": "player", "hideWhenIdle": false,"dedupe": true, "hideStopped": true, "ignore": [], "maxCards": 0, "volume": true }
+  ]
+}

@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════════
+#  app-menu — toggle для Quickshell-лаунчера застосунків (заміна wofi).
+#
+#  Якщо лаунчер уже працює — закриває його; інакше запускає у фоні.
+#  Прив'язка в Hyprland:
+#      bind = $mainMod, D, exec, /home/voltimeter/.config/theme-switch/bin/app-menu
+#
+#  Аргументи:  --query ТЕКСТ   (передзаповнити пошук; зручно для тестів)
+#              --status        (показати стан: pid / не запущено)
+# ═══════════════════════════════════════════════════════════════════════════
+set -uo pipefail
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CFG_DIR="$HOME/.config/quickshell-launcher"
+CFG="$CFG_DIR/shell.qml"
+PIDFILE="/tmp/qml-launcher.pid"
+LOGDIR="$HOME/.config/theme-switch/logs"
+LOG="$LOGDIR/app-menu.log"
+MARK="quickshell-launcher/shell.qml"
+
+mkdir -p "$LOGDIR"
+
+# ── оточення (динамічно, якщо не успадковане) ──────────────────────────────
+UID_="$(id -u)"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID_}"
+export PATH="$PATH:/usr/local/bin:/usr/bin:/bin"
+
+if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+  for f in /run/user/"$UID_"/wayland-*; do
+    case "$f" in *.lock) continue ;; esac
+    [ -S "$f" ] && { export WAYLAND_DISPLAY="$(basename "$f")"; break; }
+  done
+fi
+
+if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+  for d in /run/user/"$UID_"/hypr/*/; do
+    [ -S "$d/.socket.sock" ] || continue
+    s="$(basename "$d")"
+    if HYPRLAND_INSTANCE_SIGNATURE="$s" hyprctl monitors >/dev/null 2>&1; then
+      export HYPRLAND_INSTANCE_SIGNATURE="$s"; break
+    fi
+  done
+fi
+
+# ── пошук живого інстансу лаунчера ─────────────────────────────────────────
+# важливо: перевіряємо і cmdline (наш конфіг), і реальний exe (qs/quickshell),
+# інакше під шаблон потрапляють чужі процеси, у яких цей шлях лише згадано.
+is_qs() {
+  local p="$1" exe
+  [ -r "/proc/$p/cmdline" ] || return 1
+  exe="$(readlink -f "/proc/$p/exe" 2>/dev/null)" || return 1
+  case "$(basename "${exe:-}")" in
+    qs|quickshell) ;;
+    *) return 1 ;;
+  esac
+  tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "$MARK"
+}
+
+find_pid() {
+  local p c
+  # 1) pidfile, якщо процес справді наш
+  if [ -f "$PIDFILE" ]; then
+    p="$(cat "$PIDFILE" 2>/dev/null)"
+    if [ -n "${p:-}" ] && is_qs "$p"; then
+      echo "$p"; return 0
+    fi
+  fi
+  # 2) скан /proc (стійко до перезапусків і чужих qs-інстансів)
+  for c in /proc/[0-9]*/cmdline; do
+    p="$(basename "$(dirname "$c")")"
+    is_qs "$p" || continue
+    echo "$p"
+    return 0
+  done
+  return 1
+}
+
+PID="$(find_pid || true)"
+
+# ── --status ───────────────────────────────────────────────────────────────
+if [ "${1:-}" = "--status" ]; then
+  if [ -n "${PID:-}" ]; then echo "running pid=$PID"; else echo "stopped"; fi
+  exit 0
+fi
+
+# ── toggle: закрити ────────────────────────────────────────────────────────
+if [ -n "${PID:-}" ]; then
+  kill "$PID" 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -d "/proc/$PID" ] || break
+    sleep 0.05
+  done
+  [ -d "/proc/$PID" ] && kill -9 "$PID" 2>/dev/null
+  rm -f "$PIDFILE"
+  echo "$(date '+%F %T') closed pid=$PID" >> "$LOG"
+  exit 0
+fi
+
+# ── toggle: відкрити ───────────────────────────────────────────────────────
+if [ ! -f "$CFG" ]; then
+  echo "$(date '+%F %T') ERROR: немає $CFG" >> "$LOG"
+  exit 1
+fi
+
+# залишаємо лише останні 400 рядків логу
+[ -f "$LOG" ] && tail -n 400 "$LOG" > "$LOG.tmp" && mv -f "$LOG.tmp" "$LOG"
+
+# --query ТЕКСТ → змінна оточення (qs не приймає довільних аргументів)
+QUERY="${QS_LAUNCHER_QUERY:-}"
+MODE="${QS_LAUNCHER_MODE:-bar}"     # bar = виїжджає з-під панелі (як у KDE), center = по центру
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -q|--query) QUERY="${2:-}"; shift 2 || shift ;;
+    --center)  MODE="center"; shift ;;
+    --bar)     MODE="bar"; shift ;;
+    *) shift ;;
+  esac
+done
+export QS_LAUNCHER_QUERY="$QUERY"
+export APP_MENU_MODE="$MODE"
+
+{
+  echo "──── $(date '+%F %T') start ────"
+  echo "env: WAYLAND_DISPLAY=$WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE=${HYPRLAND_INSTANCE_SIGNATURE:-} query=${QUERY:-}"
+} >> "$LOG"
+
+# setsid + nohup: лаунчер не тримається за термінал/батьківський процес.
+# Одна повторна спроба: Quickshell інколи виходить одразу після дуже швидкого
+# перезапуску (залишковий instance.lock), другий старт завжди успішний.
+launch_once() {
+  PID=""
+  nohup setsid qs -p "$CFG" >> "$LOG" 2>&1 &
+  disown 2>/dev/null || true
+  local i
+  for i in $(seq 1 24); do
+    sleep 0.05
+    PID="$(find_pid || true)"
+    [ -n "${PID:-}" ] && break
+  done
+  [ -n "${PID:-}" ] || return 1
+  sleep 0.15
+  is_qs "$PID" || { PID=""; return 1; }
+  return 0
+}
+
+if ! launch_once; then
+  echo "$(date '+%F %T') WARN: перша спроба не втрималась, повтор" >> "$LOG"
+  if ! launch_once; then
+    echo "$(date '+%F %T') ERROR: qs не стартував (див. лог вище)" >> "$LOG"
+    exit 1
+  fi
+fi
+
+echo "$PID" > "$PIDFILE"
+echo "$(date '+%F %T') started pid=$PID args=${*:-}" >> "$LOG"

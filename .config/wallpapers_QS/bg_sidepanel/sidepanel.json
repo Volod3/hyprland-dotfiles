@@ -1,0 +1,197 @@
+// ╔══════════════════════════════════════════════════════════════════╗
+// ║  Бокова панель (Quickshell + Hyprland)                            ║
+// ║  Відкрити/закрити: натиснути й відпустити Win, або клік по 󰣇 у    ║
+// ║  waybar, або  qs -p .../bg_sidepanel/shell.qml ipc call sidepanel toggle
+// ║  Файл перечитується сам після збереження. Можна коментарі (// і   ║
+// ║  /* */) і кому після останнього елемента.                         ║
+// ╚══════════════════════════════════════════════════════════════════╝
+//
+// Команди (cmd, stateCmd, toggleCmd, rightCmd): рядок, масив [програма, арг...] або { "sh": ["рядок", ...] }.
+// stateCmd: 1-й рядок — on/off (підсвітити плитку чи ні), 2-й — підпис під назвою.
+// Обране (програми з іконками) — у favorites.json; додавати зірочкою ☆ у пошуку праворуч від панелі.
+{
+  "user": {
+    "name": "voltimeter",
+    "avatar": "~/.config/wallpapers_QS/bg_parallax_MDRG/assets/gifs/mimi_spining.gif",
+    "avatarAnimated": true           // false = лише перший кадр GIF
+  },
+  "panel": {
+    "side": "left",                  // left / right
+    "width": 480,
+    "marginTop": 56,                 // відступ зверху (під waybar), px
+    "marginBottom": 10,
+    "slideMs": 380,                  // швидкість виїзду, мс (плавна крива OutQuint)
+    "opacity": 0.86                  // прозорість фону (крізь неї — розмиті шпалери)
+  },
+  // пошук програм — окреме вікно поруч з панеллю, відкривається разом з нею
+  "launcher": {
+    "enabled": true,
+    "width": 420
+  },
+  "fonts": {
+    "icon": "JetBrainsMono Nerd Font",
+    "text": ""                       // "" = шрифт за замовчуванням
+  },
+  // сині відтінки (як вікна мережі/Bluetooth/системи з waybar)
+  "colors": {
+    "background": "#0b1020",         // темне скло (під ним розмиття Hyprland)
+    "accent":     "#9ec4ff",         // блакитний
+    "accent2":    "#c4b0ff",         // ніжно-рожевий — легкі відтінки (низ фону, відблиск)
+    "onAccent":   "#0a1124",         // текст/іконки поверх акцентного кольору
+    "text":       "#e6ecfa",
+    "tile":       "#b8c8ff",         // плитки — напівпрозорі відтінки цього кольору
+    "border":     "#b8c8ff"
+  },
+  "greeting": {
+    "format": "{greeting}, {name}!",
+    "times": [
+      { "from": "06:00", "to": "11:59", "text": "Доброго ранку" },
+      { "from": "12:00", "to": "17:59", "text": "Добрий день" },
+      { "from": "18:00", "to": "22:59", "text": "Добрий вечір" },
+      { "from": "23:00", "to": "05:59", "text": "Тихої ночі" }
+    ],
+    "fallback": "Привіт"
+  },
+  "info": [
+    "uptime",
+    { "preset": "battery", "label": "󰁹" },
+    { "preset": "time" }
+  ],
+  "actions": [
+    { "icon": "󰂚", "cmd": "swaync-client -t -sw" },             // сповіщення
+    { "icon": "󰐥", "cmd": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle power" }     // меню живлення
+  ],
+  "presets": {
+    "network": {
+      "title": "Мережа",
+      "icon": "󰛳",
+      "align": "center",
+      "closeOnClick": true,
+      "stateCmd": { "sh": [
+        "l=$(nmcli -t -f TYPE,STATE,CONNECTION device 2>/dev/null | grep -E '^(ethernet|wifi):connected' | head -n1)",
+        "if [ -n \"$l\" ]; then echo on; [ \"${l%%:*}\" = ethernet ] && echo 'Дротове' || echo \"${l#*:connected:}\"",
+        "else echo off; echo 'Немає з’єднання'; fi"
+      ]},
+      "toggleCmd": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle net",                       // клік — вікно мережі
+      "rightCmd": "nm-connection-editor"
+    },
+    "bluetooth": {
+      "title": "Bluetooth",
+      "icon": "󰂯",
+      "align": "center",
+      "closeOnClick": true,
+      "stateCmd": { "sh": [
+        "if bluetoothctl show 2>/dev/null | grep -q 'Powered: yes'; then echo on",
+        "  d=$(bluetoothctl devices Connected 2>/dev/null | head -n1 | cut -d' ' -f3-); echo \"${d:-Увімкнено}\"",
+        "else echo off; echo 'Вимкнено'; fi"
+      ]},
+      "toggleCmd": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle bt",                        // клік — вікно Bluetooth
+      "rightCmd": { "sh": [                           // ПКМ — швидко увімкнути/вимкнути
+        "if bluetoothctl show | grep -q 'Powered: yes'; then bluetoothctl power off; else bluetoothctl power on; fi"
+      ]}
+    },
+    "system": {
+      "title": "Система",
+      "icon": "󰓅",
+      "align": "center",
+      "closeOnClick": true,
+      "stateCmd": { "sh": [
+        "p=$(powerprofilesctl get 2>/dev/null); b=$(cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | head -n1)",
+        "case $p in performance) n='Потужність';; power-saver) n='Економія';; *) n='Баланс';; esac",
+        "echo off; echo \"$n · ${b}%\""
+      ]},
+      "toggleCmd": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle sys"                        // батарея, режими живлення, процеси
+    },
+    "output": {
+      "title": "Звук",
+      "icon": "󰕾",
+      "align": "center",
+      "closeOnClick": true,
+      "stateCmd": { "sh": [
+        "echo off",
+        "wpctl inspect @DEFAULT_AUDIO_SINK@ | grep -m1 'node.description' | cut -d'\"' -f2"
+      ]},
+      "toggleCmd": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle audio",   // вікно звуку
+      "rightCmd": "pavucontrol"
+    },
+    "mic": {
+      "title": "Мікрофон",
+      "icon": "󰍬",
+      "align": "center",
+      "stateCmd": { "sh": [
+        "if wpctl get-volume @DEFAULT_AUDIO_SOURCE@ | grep -q MUTED; then echo off; echo 'Вимкнено'",
+        "else echo on; echo 'Увімкнено'; fi"
+      ]},
+      "toggleCmd": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"
+    },
+    "screenshot": {
+      "title": "Скріншот",
+      "icon": "󰄀",
+      "align": "center",
+      "closeOnClick": true,
+      "requires": "hyprshot",
+      "sub": "Область",
+      "toggleCmd": "sleep 0.45; hyprshot -m region --freeze -o \"$HOME/Картинки/Знімки вікон\""
+    },
+    "gamemode": {
+      "title": "Ігровий режим",
+      "icon": "󰊴",
+      "align": "center",
+      "stateCmd": { "sh": [
+        "if [ \"$(~/.config/wallpapers_QS/tools/gamemode status)\" = on ]; then echo on; echo 'Увімкнено'; else echo off; echo 'Авто'; fi"
+      ]},
+      "toggleCmd": "~/.config/wallpapers_QS/tools/gamemode toggle"
+    },
+    "pet": {
+      "title": "Пет",
+      "icon": "󰄛",
+      "align": "center",
+      "closeOnClick": true,
+      "stateCmd": { "sh": [
+        "if pgrep -f 'qs -p .*bg_pet/shell.qml' >/dev/null; then echo on; echo 'Показати / сховати'; else echo off; echo 'Вимкнено'; fi"
+      ]},
+      "toggleCmd": { "sh": [
+        "if pgrep -f 'qs -p .*bg_pet/shell.qml' >/dev/null; then qs -p ~/.config/wallpapers_QS/bg_pet/shell.qml ipc call pet toggle",
+        "else setsid -f qs -p ~/.config/wallpapers_QS/bg_pet/shell.qml; fi"
+      ]}
+    },
+    "settings": {
+      "title": "Налаштування",
+      "icon": "󰒓",
+      "align": "center",
+      "closeOnClick": true,
+      "sub": "Hyprland",
+      "toggleCmd": "~/.config/theme-switch/bin/hypr-settings"
+    }
+  },
+  "sections": [
+    {
+      "type": "tiles",
+      "grid": { "columns": 3, "gap": 8, "rowHeight": 72 },
+      "items": [
+        "network", "bluetooth", "system",
+        "output", "mic", "screenshot",
+        "gamemode", "pet", "settings"
+      ]
+    },
+    {
+      "type": "apps",                // «Обране» — favorites.json
+      "columns": 4
+    },
+    {
+      "type": "sliders",
+      "items": ["volume", "mic", "brightness"]
+    },
+    { "type": "transfers" },                // запис на флешку: прогрес (лише під час копіювання)
+    { "type": "keyboard" },                 // підсвітка клавіатури + RGB-ефекти (лише якщо є)
+    {
+      "type": "player",
+      "hideWhenIdle": true,          // true = ховати, коли нічого не грає
+      "dedupe": true,                // ховати дублі (той самий трек з браузера)
+      "hideStopped": true,           // ховати зупинені джерела, якщо є активні
+      "ignore": [],                  // plasma-browser-integration не ігнорується (у нього обкладинка); після закриття браузера ховається сам
+      "maxCards": 1,                 // одна картка — щоб панель не переповнювалась
+      "volume": false                // повзунок гучності плеєра прибрано (браузери ним не керуються)
+    }
+  ]
+}

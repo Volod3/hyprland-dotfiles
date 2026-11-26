@@ -1,0 +1,54 @@
+{
+  "pulseaudio": {
+    "format": "{icon} {volume}%",
+    "format-bluetooth": "{icon} {volume}% ",
+    "format-bluetooth-muted": "  {icon} ",
+    "format-muted": " ",
+    "format-icons": {
+      "headphone": "",
+      "hands-free": "",
+      "headset": "",
+      "phone": "",
+      "portable": "",
+      "car": "",
+      "default": [" ", " ", " "]
+    },
+    "scroll-step": 5,
+    "on-click-right": "pavucontrol",
+    "on-click": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
+  },
+  "pulseaudio#mic": {
+    "format": "{format_source}",               // лише мікрофон (раніше тут ще стояла іконка динаміка)
+    "format-source": " {volume}%",
+    "format-source-muted": " ",
+    // через PipeWire, тобто саме той мікрофон, що зараз вибраний (amixer міняв мікрофон звукової карти)
+    "on-scroll-up": "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SOURCE@ 5%+",
+    "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%-",
+    "on-click-right": "pavucontrol",
+    "on-click": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"
+  },
+
+  "mpris": {
+    "format": "{player_icon} {dynamic}",
+    "format-paused": "{status_icon} <i>{dynamic}</i>",
+    "player-icons": { "default": "▶" },
+    "status-icons": { "paused": "⏸" },
+    "dynamic-order": ["artist", "title"],
+    "max-length": 40
+  },
+
+  // Хвилька cava. Вбудований модуль "cava" у waybar з Arch не зібраний ("Unknown module: cava"),
+  // тому вона йде окремим скриптом cava.sh. Аргументи: кількість смуг і кадрів на секунду.
+  "custom/cava": {
+    "exec": "~/.config/waybar/cava.sh 20 60",
+    "format": "{}",
+    "tooltip": false,
+    "restart-interval": 5,          // якщо cava впаде (наприклад, PipeWire ще не готовий) — перезапуск через 5 с
+     "on-click": "kitty cava"
+  },
+
+  "group/media": {
+    "orientation": "horizontal",
+    "modules": ["custom/cava", "pulseaudio", "pulseaudio#mic"]
+  }
+}

@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""pet-safe-shell — виконує ПРОСТІ й БЕЗПЕЧНІ команди терміналу для пета (і нічого більше).
+
+  pet-safe-shell 'df -h /'
+  pet-safe-shell 'ps aux --sort=-%mem | head -5'
+
+Правила:
+  * тільки програми з білого списку нижче, кожна — лише з дозволеними підкомандами/прапорцями;
+  * можна з'єднувати через | (конвеєр), але НЕ можна ; && || > < ` $( ) — тобто без перенаправлень у файли
+    і без ланцюжків;
+  * mkdir / touch — лише всередині домашньої папки; rm, mv, chmod, sudo, dd, kill … — заборонено;
+  * таймаут 10 с, вихід обрізається до 2000 символів.
+Відповідь — звичайний текст; при відмові перший рядок починається з "BLOCKED:".
+"""
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+
+# програма -> перевірка аргументів (None = будь-які аргументи без небезпечних прапорців)
+READONLY = {"ls", "pwd", "whoami", "date", "cal", "uptime", "free", "df", "du", "uname", "hostname", "ps",
+            "lsblk", "lscpu", "lsusb", "lspci", "nvidia-smi", "sensors", "echo", "sort", "uniq", "cut", "wc",
+            "head", "tail", "grep", "cat", "which", "whereis", "file", "stat", "id", "groups", "nproc",
+            "fastfetch", "neofetch", "top", "tr", "column", "basename", "dirname",
+            "realpath", "find", "tree", "expr", "seq", "ping", "ip", "ss", "nmcli", "bluetoothctl",
+            "pactl", "wpctl", "playerctl", "pacman", "journalctl", "systemctl", "powerprofilesctl",
+            "brightnessctl", "hyprctl", "ollama", "mkdir", "touch", "xdg-open", "notify-send", "speedtest-cli",
+            "curl"}
+
+DENY_TOKENS = re.compile(r"[;&<>`]|\$\(|\|\||&&|\n")
+
+
+def under_home(p):
+    p = os.path.realpath(os.path.expanduser(p))
+    return p == HOME or p.startswith(HOME + os.sep)
+
+
+def check(argv):
+    prog = os.path.basename(argv[0])
+    args = argv[1:]
+    if prog not in READONLY:
+        return f"програма «{prog}» не в білому списку"
+    a = " ".join(args)
+    if prog in ("mkdir", "touch"):
+        paths = [x for x in args if not x.startswith("-")]
+        if not paths or not all(under_home(x) for x in paths):
+            return "mkdir/touch — лише всередині домашньої папки"
+    if prog == "find" and re.search(r"-(delete|exec|execdir|ok|okdir|fprint|fls)\b", a):
+        return "find без -delete/-exec"
+    if prog in ("cat", "head", "tail", "grep", "file", "stat", "wc"):
+        for x in args:
+            if x.startswith("-"):
+                continue
+            rp = os.path.realpath(os.path.expanduser(x))
+            if os.path.exists(rp) and not (under_home(rp) or rp.startswith(("/proc/", "/sys/class/", "/etc/os-release",
+                                                                              "/etc/hostname", "/etc/locale.conf"))):
+                return f"читати можна лише файли в домашній папці (а не {x})"
+            if re.search(r"/(\.ssh|\.gnupg|\.local/share/kwalletd|\.password-store)(/|$)", rp) or rp.endswith((".env", "credentials.json")):
+                return "приватні файли (ключі, паролі) не читаю"
+    if prog == "ping" and not re.search(r"(^|\s)-c\s*[1-5]\b", a):
+        return "ping лише з -c 1..5"
+    if prog == "ip" and not re.match(r"^(-\w+\s+)*(a|addr|address|r|route|l|link|neigh)(\s+show)?(\s|$)", a or "a"):
+        return "ip — лише перегляд (addr/route/link)"
+    if prog == "nmcli" and re.search(r"\b(connect|delete|modify|add|down|up|off|on|reload|edit|import|set)\b", a):
+        return "nmcli — лише перегляд"
+    if prog == "bluetoothctl" and not re.match(r"^(devices|info|show|list|paired-devices)(\s|$)", a):
+        return "bluetoothctl — лише devices/info/show"
+    if prog == "pactl" and not re.match(r"^(list|info|get-\S+|stat)(\s|$)", a):
+        return "pactl — лише перегляд"
+    if prog == "wpctl" and not re.match(r"^(status|get-volume|inspect)(\s|$)", a):
+        return "wpctl — лише status/get-volume"
+    if prog == "pacman" and not re.match(r"^-(Q|Ss|Si)\w*(\s|$)", a):
+        return "pacman — лише -Q/-Ss/-Si (без встановлення/видалення)"
+    if prog == "journalctl" and re.search(r"--(vacuum|rotate|flush|sync)", a):
+        return "journalctl — лише читання"
+    if prog == "systemctl" and not re.match(r"^(--user\s+)?(status|is-active|is-enabled|list-units|list-timers)(\s|$)", a):
+        return "systemctl — лише status/is-active/list-units"
+    if prog == "hyprctl" and not re.match(r"^(clients|monitors|workspaces|activewindow|activeworkspace|devices|version|getoption|layers|binds)(\s|$)", a):
+        return "hyprctl — лише перегляд"
+    if prog == "ollama" and not re.match(r"^(ps|list|show)(\s|$)", a):
+        return "ollama — лише ps/list/show"
+    if prog == "powerprofilesctl" and not re.match(r"^(get|list|set\s+(performance|balanced|power-saver))(\s|$)", a or "get"):
+        return "powerprofilesctl — get/list/set"
+    if prog == "brightnessctl" and re.search(r"--device|-d\b", a):
+        return "brightnessctl — лише основний екран"
+    if prog == "curl" and (re.search(r"\s-(o|O|T|d|F|X|u)\b|--(output|upload|data|form|request|user)", " " + a) or not re.search(r"https?://", a)):
+        return "curl — лише прочитати сторінку (без -o/-d/-X)"
+    if prog == "top" and "-b" not in args:
+        return "top лише з -b -n 1"
+    return None
+
+
+def main():
+    cmd = " ".join(sys.argv[1:]).strip()
+    if not cmd:
+        print("BLOCKED: порожня команда")
+        return 2
+    if DENY_TOKENS.search(cmd):
+        print("BLOCKED: не можна ; && || > < ` $( ) — лише одна команда або конвеєр через |")
+        return 2
+    stages = [s.strip() for s in cmd.split("|")]
+    for st in stages:
+        try:
+            argv = shlex.split(st)
+        except ValueError as e:
+            print(f"BLOCKED: не вдалося розібрати: {e}")
+            return 2
+        if not argv:
+            print("BLOCKED: порожня частина конвеєра")
+            return 2
+        if argv[0] in ("sudo", "doas", "su", "pkexec"):
+            print("BLOCKED: прав адміністратора не буде")
+            return 2
+        why = check(argv)
+        if why:
+            print("BLOCKED: " + why)
+            return 2
+    try:
+        r = subprocess.run(["bash", "-c", "set -o pipefail; " + cmd], capture_output=True, text=True,
+                           timeout=10, cwd=HOME, stdin=subprocess.DEVNULL)
+        out = (r.stdout + ("\n" + r.stderr if r.stderr.strip() else "")).strip()
+        print(out[:2000] if out else f"(готово, код {r.returncode}, виводу нема)")
+        return 0
+    except subprocess.TimeoutExpired:
+        print("BLOCKED: команда працювала довше 10 с і була зупинена")
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

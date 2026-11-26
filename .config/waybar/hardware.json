@@ -1,0 +1,61 @@
+{
+  "cpu": {
+    "format": "  {usage}%",
+    "tooltip-format": "Процесор: {usage}%",
+    "on-click": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle sys"
+  },
+
+  "memory": {
+    "format": "  {}%",
+    "tooltip-format": "Пам'ять: {used:0.1f} / {total:0.1f} ГБ",
+    "on-click": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle sys"
+  },
+
+  "disk": {
+    "interval": 30,
+    "format": "󰋊 {percentage_used}%",
+    "tooltip-format": "Диск /: {used} / {total}",
+    "paths": ["/"],
+    "on-click": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle sys"
+  },
+
+  "temperature": {
+    "format": "{icon} {temperatureC}°C",
+    "format-icons": ["󱃃", "󰔏", "󱃂"],
+    "interval": 2,
+    "critical-threshold": 85,
+    // Датчик процесора Intel (coretemp). Номер hwmonN змінюється між перезавантаженнями,
+    // тому вказується папка БЕЗ hwmonN — waybar знайде його сам.
+    "hwmon-path-abs": "/sys/devices/platform/coretemp.0/hwmon",
+    "input-filename": "temp1_input",
+    "on-click": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle sys"
+  },
+
+  "battery": {
+    "on-click": "qs -p ~/.config/wallpapers_QS/bg_popups/shell.qml ipc call popup toggle sys",
+    "states": {
+      "good": 95,
+      "warning": 30,
+      "critical": 15
+    },
+    "format": "{icon} {capacity}%",
+    "format-charging": "󰂄 {capacity}%",
+    "format-plugged": "󰚥 {capacity}%",
+    "format-full": "󰁹 {capacity}%",
+    "tooltip-format": "{capacity}% · {timeTo}",        // час до розряду/заряду — у підказці (раніше клік підміняв % на час)
+    "format-time": "{H} год {M} хв",
+    "format-icons": ["󰁺", "󰁼", "󰁾", "󰂀", "󰁹"]
+  },
+
+  // Стискається: завжди видно батарею, а температура / CPU / RAM / диск виїжджають при наведенні.
+  // Клік по будь-якому — вікно «Система» (батарея, режими, процеси).
+  "group/hardware": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 450,
+      "children-class": "hw-extra",
+      "transition-left-to-right": false
+    },
+    "modules": ["battery", "temperature", "cpu", "memory"]   // диск — у вікні «Система» (клік), щоб розгорнутий блок не штовхав робочі столи
+  }
+}

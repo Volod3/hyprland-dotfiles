@@ -1,0 +1,9 @@
+mode=drun
+allow_images=true
+image_size=32
+prompt=Пошук...
+insensitive=true
+width=500
+height=400
+location=center
+show_all=false

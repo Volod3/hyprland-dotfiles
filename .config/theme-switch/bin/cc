@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# cc — toggle для Quickshell-панелі "Центр керування" (Азур)
+# Використання: cc            # відкрити / закрити панель
+#               cc open|close|status
+set -uo pipefail
+
+CFG="$HOME/.config/quickshell-cc/shell.qml"
+PIDFILE="/tmp/quickshell-cc.pid"
+LOG_DIR="$HOME/.config/theme-switch/logs"
+LOG="$LOG_DIR/cc.log"
+mkdir -p "$LOG_DIR"
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
+
+# ── оточення Hyprland ─────────────────────────────────────────
+detect_env() {
+    [ -n "${WAYLAND_DISPLAY:-}" ] || export WAYLAND_DISPLAY=wayland-1
+    if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && hyprctl monitors >/dev/null 2>&1; then
+        return 0
+    fi
+    unset HYPRLAND_INSTANCE_SIGNATURE
+    local d sig
+    for d in "$XDG_RUNTIME_DIR"/hypr/*/; do
+        [ -d "$d" ] || continue
+        [ -e "$d/hyprland.lock" ] || [ -e "$d/.socket.sock" ] || continue
+        sig="$(basename "$d")"
+        export HYPRLAND_INSTANCE_SIGNATURE="$sig"
+        if hyprctl monitors >/dev/null 2>&1; then
+            return 0
+        fi
+        unset HYPRLAND_INSTANCE_SIGNATURE
+    done
+    return 1
+}
+
+detect_env || true
+
+running_pid() {
+    [ -f "$PIDFILE" ] || return 1
+    local pid
+    pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+    [ -n "$pid" ] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    # переконаємось, що це справді наша панель
+    if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q "quickshell-cc"; then
+        printf '%s' "$pid"
+        return 0
+    fi
+    return 1
+}
+
+do_close() {
+    local pid
+    if pid="$(running_pid)"; then
+        kill "$pid" 2>/dev/null
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.05
+        done
+        kill -9 "$pid" 2>/dev/null || true
+        rm -f "$PIDFILE"
+        echo "cc: закрито" >>"$LOG"
+        return 0
+    fi
+    rm -f "$PIDFILE"
+    return 1
+}
+
+orphan_pids() {
+    # усі процеси qs, що запущені саме з нашим конфігом (без ризику зачепити чужі shell)
+    local p
+    for p in $(pgrep -x qs 2>/dev/null); do
+        [ "$p" = "$$" ] && continue
+        if tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null | grep -qxF "$CFG"; then
+            printf '%s\n' "$p"
+        fi
+    done
+}
+
+wait_gone() {
+    local i
+    for i in $(seq 1 30); do
+        [ -z "$(orphan_pids)" ] && return 0
+        sleep 0.05
+    done
+    return 1
+}
+
+spawn_panel() {
+    setsid qs -p "$CFG" >>"$LOG" 2>&1 &
+    local pid=$!
+    echo "$pid" >"$PIDFILE"
+    printf '%s' "$pid"
+}
+
+surface_up() {
+    hyprctl layers 2>/dev/null | grep -q "namespace: quickshell-cc"
+}
+
+do_open() {
+    # прибрати "сирітські" екземпляри попередніх запусків і дочекатись їх завершення
+    for p in $(orphan_pids); do kill "$p" 2>/dev/null; done
+    wait_gone || true
+    sleep 0.06
+    echo "── $(date '+%F %T') cc open ──" >>"$LOG"
+
+    local pid attempt i ok=0
+    for attempt in 1 2; do
+        pid="$(spawn_panel)"
+        for i in $(seq 1 30); do
+            if surface_up; then ok=1; break; fi
+            sleep 0.1
+        done
+        [ "$ok" = 1 ] && break
+        if [ "$attempt" = 1 ]; then
+            echo "cc: шар не з'явився, повторний запуск" >>"$LOG"
+            kill "$pid" 2>/dev/null
+            sleep 0.5
+        fi
+    done
+    # прибрати pid-файл, коли процес завершиться
+    ( while kill -0 "$pid" 2>/dev/null; do sleep 0.4; done
+      [ "$(cat "$PIDFILE" 2>/dev/null)" = "$pid" ] && rm -f "$PIDFILE" ) >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    if [ "$ok" = 1 ]; then
+        echo "cc: відкрито (pid $pid)" >>"$LOG"
+    else
+        echo "cc: відкрито, але шар не підтверджено (pid $pid)" >>"$LOG"
+    fi
+}
+
+case "${1:-toggle}" in
+    open)
+        if running_pid >/dev/null; then exit 0; fi
+        do_open ;;
+    close)
+        do_close || true ;;
+    toggle)
+        if running_pid >/dev/null; then do_close; else do_open; fi ;;
+    status)
+        if pid="$(running_pid)"; then echo "open (pid $pid)"
+        elif pid="$(orphan_pids | head -1)" && [ -n "$pid" ]; then echo "$pid" >"$PIDFILE"; echo "open (pid $pid)"
+        else echo "closed"; fi ;;
+    *)
+        echo "usage: cc [open|close|toggle|status]" >&2; exit 2 ;;
+esac

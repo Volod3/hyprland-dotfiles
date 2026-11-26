@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# ccctl — back-end для Quickshell-панелі ~/.config/quickshell-cc/shell.qml
+# Друк: ccctl status  -> JSON зі станом системи
+#        ccctl <action> [arg]
+set -uo pipefail
+export LC_ALL=C
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+STATE_CPU=/tmp/cc-cpu.state
+
+action="${1:-status}"
+
+# ---------- helpers ----------
+num() { printf '%s' "$1" | tr -dc '0-9'; }
+
+get_vol() {  # $1 = sink|source
+  local js def pct mute
+  if [ "$1" = sink ]; then
+    js=$(pactl -f json list sinks 2>/dev/null); def=$(pactl get-default-sink 2>/dev/null)
+  else
+    js=$(pactl -f json list sources 2>/dev/null); def=$(pactl get-default-source 2>/dev/null)
+  fi
+  pct=$(jq -r --arg d "$def" '
+      (if $d == "" then .[0] else (map(select(.name==$d)) | .[0] // .[0]) end)
+      | if . == null then 0
+        else (.volume | to_entries | map(.value.value_percent | rtrimstr("%") | tonumber) | max) end
+    ' <<<"$js" 2>/dev/null)
+  mute=$(jq -r --arg d "$def" '
+      (if $d == "" then .[0] else (map(select(.name==$d)) | .[0] // .[0]) end)
+      | if . == null then true else .mute end
+    ' <<<"$js" 2>/dev/null)
+  echo "${pct:-0} ${mute:-false}"
+}
+
+cpu_usage() {
+  local u n s i w irq sirq st rest total idle dt di pct
+  read -r _ u n s i w irq sirq st rest < /proc/stat
+  total=$((u+n+s+i+w+irq+sirq+st)); idle=$((i+w))
+  pct=0
+  if [ -f "$STATE_CPU" ]; then
+    read -r pt pi < "$STATE_CPU" || { pt=$total; pi=$idle; }
+    dt=$((total-pt)); di=$((idle-pi))
+    [ "$dt" -gt 0 ] && pct=$(( (dt-di)*1000/dt )) && pct=$((pct/10))
+  fi
+  printf '%s %s\n' "$total" "$idle" > "$STATE_CPU"
+  echo "$pct"
+}
+
+cpu_temp() {
+  local f n m=-1 v
+  for f in /sys/class/hwmon/hwmon*/name; do
+    [ -r "$f" ] || continue
+    [ "$(cat "$f" 2>/dev/null)" = coretemp ] || continue
+    for v in "$(dirname "$f")"/temp*_input; do
+      [ -r "$v" ] || continue
+      local t=$(( $(cat "$v") / 1000 ))
+      [ "$t" -gt "$m" ] && m=$t
+    done
+  done
+  [ "$m" -lt 0 ] && m=0
+  echo "$m"
+}
+
+ram_pct() {
+  local tot avail
+  tot=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+  avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
+  [ "${tot:-0}" -gt 0 ] && echo $(( (tot-avail)*100/tot )) || echo 0
+}
+
+wifi_state() {
+  local dev state radio
+  radio=$(nmcli radio wifi 2>/dev/null)
+  if ! nmcli -t -f DEVICE,TYPE device 2>/dev/null | grep -q ':wifi$'; then
+    echo "missing"; return
+  fi
+  if [ "$radio" != "enabled" ]; then echo "off"; return; fi
+  dev=$(nmcli -t -f DEVICE,TYPE device 2>/dev/null | awk -F: '$2=="wifi"{print $1; exit}')
+  state=$(nmcli -t -f GENERAL.STATE device show "$dev" 2>/dev/null | cut -d: -f2)
+  case "$state" in
+    100*) echo "on" ;;
+    30*|50*) echo "connecting" ;;
+    *) echo "off" ;;
+  esac
+}
+
+bt_state() {
+  local out
+  out=$(bluetoothctl show 2>/dev/null)
+  if grep -q "Powered: yes" <<<"$out"; then echo "on"; else
+    grep -q "Powered: no" <<<"$out" && echo "off" || echo "missing"; fi
+}
+
+game_state() {
+  local o
+  o=$(~/.config/theme-switch/bin/game-mode status 2>/dev/null | head -1)
+  case "$o" in *OFF*) echo "off";; *ON*) echo "on";; *) echo "off";; esac
+}
+
+battery() {
+  local b=/sys/class/power_supply/BAT1 pct st
+  if [ -d "$b" ]; then
+    pct=$(num "$(cat "$b/capacity" 2>/dev/null)"); st=$(cat "$b/status" 2>/dev/null)
+    echo "${pct:-0} ${st:-Unknown}"
+  else
+    echo "-1 Unknown"
+  fi
+}
+
+# ---------- status ----------
+do_status() {
+  local sink_json src_json dsink dsrc vs vm ms mm bright bmax wifi bt dnd game bat_c bat_s temp cpu ram
+  sink_json=$(pactl -f json list sinks 2>/dev/null || echo '[]')
+  src_json=$(pactl -f json list sources 2>/dev/null || echo '[]')
+  dsink=$(pactl get-default-sink 2>/dev/null || echo '')
+  dsrc=$(pactl get-default-source 2>/dev/null || echo '')
+
+  read -r vs vm <<<"$(get_vol sink)"
+  read -r ms mm <<<"$(get_vol source)"
+
+  bright=$(brightnessctl get 2>/dev/null || echo 0)
+  bmax=$(brightnessctl max 2>/dev/null || echo 1)
+  [ "$bmax" -gt 0 ] || bmax=1
+
+  wifi=$(wifi_state); bt=$(bt_state)
+  dnd=$(swaync-client -D 2>/dev/null | tr -d '[:space:]'); [ -n "$dnd" ] || dnd=false
+  game=$(game_state)
+  read -r bat_c bat_s <<<"$(battery)"
+  temp=$(cpu_temp); cpu=$(cpu_usage); ram=$(ram_pct)
+
+  jq -nc \
+    --argjson sinks "$sink_json" \
+    --argjson sources "$src_json" \
+    --arg dsink "$dsink" --arg dsrc "$dsrc" \
+    --argjson vs "${vs:-0}" --argjson vm "${vm:-false}" \
+    --argjson ms "${ms:-0}" --argjson mm "${mm:-false}" \
+    --argjson bright "${bright:-0}" --argjson bmax "${bmax:-1}" \
+    --arg wifi "$wifi" --arg bt "$bt" --arg dnd "$dnd" --arg game "$game" \
+    --argjson bat "${bat_c:--1}" --arg batst "${bat_s:-Unknown}" \
+    --argjson temp "${temp:-0}" --argjson cpu "${cpu:-0}" --argjson ram "${ram:-0}" \
+    '{
+      sink: $dsink,
+      vol: $vs,
+      volMuted: $vm,
+      sinks: ($sinks | map({name: .name, desc: .description, active: (.name == $dsink)})),
+      source: $dsrc,
+      mic: $ms,
+      micMuted: $mm,
+      sources: ($sources | map(select(.name | endswith(".monitor") | not))
+                 | map({name: .name, desc: .description, active: (.name == $dsrc)})),
+      bright: $bright,
+      brightMax: $bmax,
+      brightPct: ($bright * 100 / $bmax | floor),
+      wifi: $wifi,
+      bt: $bt,
+      dnd: ($dnd == "true"),
+      game: ($game == "on"),
+      bat: $bat,
+      batStatus: $batst,
+      temp: $temp,
+      cpu: $cpu,
+      ram: $ram
+    }'
+}
+
+# ---------- actions ----------
+case "$action" in
+  status)  do_status ;;
+  vol)     pactl set-sink-volume @DEFAULT_SINK@ "${2}%" ;;
+  vol-mute) pactl set-sink-mute @DEFAULT_SINK@ toggle ;;
+  mic)     pactl set-source-volume @DEFAULT_SOURCE@ "${2}%" ;;
+  mic-mute) pactl set-source-mute @DEFAULT_SOURCE@ toggle ;;
+  sink)    pactl set-default-sink "${2}" && pactl set-sink-volume "${2}" "$(pactl get-sink-volume "${2}" | grep -o '[0-9]*%' | head -1)" >/dev/null 2>&1 ;;
+  source)  pactl set-default-source "${2}" ;;
+  bright)  brightnessctl set "${2}%" >/dev/null ;;
+  wifi)    case "${2:-toggle}" in
+             on) nmcli radio wifi on ;;
+             off) nmcli radio wifi off ;;
+             *) [ "$(nmcli radio wifi)" = "enabled" ] && nmcli radio wifi off || nmcli radio wifi on ;;
+           esac ;;
+  bt)      case "${2:-toggle}" in
+             on) bluetoothctl power on ;;
+             off) bluetoothctl power off ;;
+             *) if bt_state_menu=$(bluetoothctl show 2>/dev/null); grep -q "Powered: yes" <<<"$bt_state_menu"; then bluetoothctl power off; else bluetoothctl power on; fi ;;
+           esac ;;
+  dnd)     [ "${2:-toggle}" = "toggle" ] && swaync-client -d >/dev/null || { [ "$2" = on ] && swaync-client -dn >/dev/null || swaync-client -df >/dev/null; } ;;
+  game)    ~/.config/theme-switch/bin/game-mode toggle >/dev/null 2>&1 ;;
+  pavu)    if [ "${2:-sink}" = sink ]; then setsid pavucontrol --tab=3 >/dev/null 2>&1 & else setsid pavucontrol --tab=4 >/dev/null 2>&1 & fi ;;
+  *) echo "unknown action: $action" >&2; exit 2 ;;
+esac

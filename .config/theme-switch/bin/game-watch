@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""game-watch — watch Hyprland for fullscreen windows and toggle game-mode.
+
+Connects to the Hyprland event socket (.socket2.sock), debounces bursts of
+window events, then recomputes the real fullscreen state via `hyprctl clients`
+and calls `game-mode on` / `game-mode off` when the state actually changes.
+
+Reconnects automatically if Hyprland restarts or the socket drops.
+
+Usage:
+  game-watch            run in foreground (for autostart use: game-watch &)
+  game-watch --once     evaluate once, apply, exit (useful for testing)
+  game-watch --status   print detected fullscreen windows and current state
+"""
+
+import fcntl
+import json
+import os
+import select
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+BASE = os.path.join(CONFIG_HOME, "theme-switch")
+GAME_MODE = os.path.join(BASE, "bin", "game-mode")
+FLAG = os.path.join(BASE, "state", "game-mode.active")
+LOG_FILE = os.path.join(BASE, "logs", "game-watch.log")
+LOCK_FILE = os.path.join(BASE, "state", "game-watch.lock")
+
+RT = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+DEBOUNCE = 2.0   # seconds to wait after the last window event
+SAFETY = 30.0    # periodic re-check even without events
+RECONNECT = 3.0  # delay before reconnecting
+
+# Events after which the fullscreen picture may have changed.
+TRIGGER_EVENTS = {
+    "fullscreen",
+    "openwindow",
+    "closewindow",
+    "movewindow",
+    "movewindowv2",
+    "workspace",
+    "workspacev2",
+    "createworkspace",
+    "destroyworkspace",
+    "changefloatingmode",
+    "windowtitle",
+    "monitoradded",
+}
+
+
+def log(msg):
+    try:
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [game-watch:{os.getpid()}] {msg}\n")
+    except OSError:
+        pass
+
+
+def hypr_env(sig):
+    env = dict(os.environ)
+    env["HYPRLAND_INSTANCE_SIGNATURE"] = sig
+    env["XDG_RUNTIME_DIR"] = RT
+    if not env.get("DBUS_SESSION_BUS_ADDRESS") and os.path.exists(os.path.join(RT, "bus")):
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={RT}/bus"
+    return env
+
+
+def hyprctl(sig, *args, timeout=4):
+    return subprocess.run(
+        ["hyprctl", *args], capture_output=True, text=True, env=hypr_env(sig), timeout=timeout
+    )
+
+
+def find_sig():
+    """Return the instance signature of the live Hyprland compositor."""
+    candidates = []
+    env_sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if env_sig:
+        candidates.append(env_sig)
+    try:
+        for name in sorted(os.listdir(os.path.join(RT, "hypr"))):
+            path = os.path.join(RT, "hypr", name)
+            if (
+                name not in candidates
+                and os.path.isdir(path)
+                and os.path.exists(os.path.join(path, ".socket.sock"))
+            ):
+                candidates.append(name)
+    except OSError:
+        pass
+
+    for cand in candidates:
+        try:
+            res = hyprctl(cand, "monitors", "-j", timeout=2)
+        except Exception:
+            continue
+        out = (res.stdout or "").strip()
+        if res.returncode == 0 and out.startswith("[") and '"name"' in out:
+            return cand
+    return None
+
+
+def fullscreen_windows(sig):
+    """List of (class, title) for mapped, non-hidden fullscreen windows, or None."""
+    try:
+        res = hyprctl(sig, "clients", "-j")
+        clients = json.loads(res.stdout or "[]")
+    except Exception as exc:  # noqa: BLE001 - any failure means "unknown"
+        log(f"clients query failed: {exc}")
+        return None
+    result = []
+    for client in clients:
+        try:
+            fs = int(client.get("fullscreen") or 0)
+        except (TypeError, ValueError):
+            fs = 0
+        if fs >= 1 and client.get("mapped", True) and not client.get("hidden", False):
+            result.append((client.get("class") or "?", client.get("title") or ""))
+    return result
+
+
+def is_active():
+    return os.path.exists(FLAG)
+
+
+def run_game_mode(sig, action):
+    try:
+        res = subprocess.run(
+            [GAME_MODE, action],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            env=hypr_env(sig),
+        )
+        log(f"game-mode {action}: rc={res.returncode} {res.stdout.strip()[:200]} {res.stderr.strip()[:200]}")
+        return res.returncode == 0
+    except Exception as exc:  # noqa: BLE001
+        log(f"game-mode {action} failed: {exc}")
+        return False
+
+
+def reconcile(sig, windows, why):
+    """Turn game mode on/off to match the fullscreen picture."""
+    if windows is None:
+        return
+    want_on = len(windows) > 0
+    active = is_active()
+    if want_on == active:
+        return
+    log(
+        f"{why}: {len(windows)} fullscreen window(s) "
+        f"{[w[0] for w in windows][:5]} -> game-mode {'on' if want_on else 'off'}"
+    )
+    run_game_mode(sig, "on" if want_on else "off")
+
+
+def evaluate(sig, why):
+    reconcile(sig, fullscreen_windows(sig), why)
+
+
+def cmd_status():
+    sig = find_sig()
+    if not sig:
+        print("game-watch: no live Hyprland instance")
+        return 1
+    windows = fullscreen_windows(sig) or []
+    print(f"instance: {sig}")
+    print(f"game mode active: {'yes' if is_active() else 'no'}")
+    print(f"fullscreen windows: {len(windows)}")
+    for cls, title in windows:
+        print(f"  - {cls}: {title[:60]}")
+    return 0
+
+
+def main(argv):
+    args = set(argv[1:])
+    if "--status" in args:
+        return cmd_status()
+    if "--once" in args:
+        sig = find_sig()
+        if not sig:
+            log("once: no live Hyprland instance")
+            print("game-watch: no live Hyprland instance")
+            return 1
+        windows = fullscreen_windows(sig)
+        print(f"fullscreen windows: {len(windows or [])}")
+        reconcile(sig, windows, "once")
+        return 0
+
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
+    lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("game-watch: already running", file=sys.stderr)
+        return 0
+
+    stopping = {"flag": False}
+
+    def on_signal(_signum, _frame):
+        stopping["flag"] = True
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGHUP, on_signal)
+
+    log("watcher started")
+    sock = None
+    sig = None
+    buf = b""
+    dirty = False
+    last_event = 0.0
+    last_safety = time.monotonic()
+
+    while not stopping["flag"]:
+        if sock is None:
+            sig = find_sig()
+            if not sig:
+                time.sleep(RECONNECT)
+                continue
+            path = os.path.join(RT, "hypr", sig, ".socket2.sock")
+            try:
+                new_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                new_sock.settimeout(1.0)
+                new_sock.connect(path)
+            except OSError as exc:
+                log(f"connect to {path} failed: {exc}")
+                time.sleep(RECONNECT)
+                continue
+            sock = new_sock
+            buf = b""
+            log(f"connected to {path}")
+            evaluate(sig, "startup")
+            last_safety = time.monotonic()
+            continue
+
+        try:
+            ready, _, _ = select.select([sock], [], [], 0.4)
+            if ready:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    raise ConnectionResetError("eof")
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = line.decode("utf-8", "replace").strip()
+                    if not text or ">>" not in text:
+                        continue
+                    event = text.split(">>", 1)[0]
+                    if event in TRIGGER_EVENTS:
+                        dirty = True
+                        last_event = time.monotonic()
+        except (OSError, ConnectionResetError) as exc:
+            log(f"socket error: {exc}; reconnecting")
+            try:
+                sock.close()
+            except OSError:
+                pass
+            sock = None
+            time.sleep(1.0)
+            continue
+
+        now = time.monotonic()
+        if dirty and now - last_event >= DEBOUNCE:
+            dirty = False
+            last_safety = now
+            evaluate(sig, "event")
+        elif now - last_safety >= SAFETY:
+            last_safety = now
+            evaluate(sig, "safety")
+
+    if sock is not None:
+        try:
+            sock.close()
+        except OSError:
+            pass
+    log("watcher stopped")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

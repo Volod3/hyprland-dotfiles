@@ -1,0 +1,14 @@
+#!/bin/sh
+# remote-desktop — керування цим ПК з телефона: VNC-сервер wayvnc ЛИШЕ на адресі Tailscale
+# (з інтернету чи домашньої Wi-Fi його не видно — тільки з твоїх пристроїв у Tailscale).
+# Автозапуск з hyprland.lua. На телефоні: Tailscale + AVNC (Android) / RealVNC Viewer → voltimeter-pc:5900
+while :; do
+    ip=$(tailscale ip -4 2>/dev/null | head -n1)
+    if [ -n "$ip" ]; then
+        # розкладки як у системі (us,ua): без цього wayvnc знає лише англійську і українські літери з телефона губились
+        kb=$(hyprctl getoption input:kb_layout -j 2>/dev/null | sed -n 's/.*"str": *"\([^"]*\)".*/\1/p' | tr -d ' ')
+        [ -n "$kb" ] || kb="us,ua"
+        wayvnc --max-fps=30 --keyboard="$kb" "$ip" 5900
+    fi
+    sleep 10          # Tailscale ще не увійшов / зміна адреси / wayvnc впав — пробуємо знову
+done

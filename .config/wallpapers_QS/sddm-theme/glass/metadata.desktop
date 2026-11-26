@@ -1,0 +1,11 @@
+[SddmGreeterTheme]
+Name=Glass
+Description=Екран входу в стилі екрана блокування: темне скло, блакитний і рожевий, анімації
+Author=voltimeter
+Type=sddm-theme
+Version=1.0
+MainScript=Main.qml
+ConfigFile=theme.conf
+Theme-Id=glass
+Theme-API=2.0
+QtVersion=6

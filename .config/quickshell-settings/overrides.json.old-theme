@@ -1,0 +1,17 @@
+{
+  "updated_at": "2026-11-13T21:53:10+02:00",
+  "hyprland_sig": "11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1794592243_427009492",
+  "values": {
+    "general:gaps_in": 5,
+    "general:gaps_out": 20,
+    "general:border_size": 2,
+    "decoration:rounding": 10,
+    "decoration:active_opacity": 0.93,
+    "decoration:inactive_opacity": 0.87,
+    "decoration:blur:enabled": true,
+    "decoration:blur:size": 6,
+    "decoration:blur:passes": 3,
+    "decoration:blur:vibrancy": 0.35,
+    "animations:enabled": true
+  }
+}

@@ -1,0 +1,7 @@
+module components
+singleton Theme 1.0 Theme.qml
+Btn 1.0 Btn.qml
+Toggle 1.0 Toggle.qml
+SettingSlider 1.0 SettingSlider.qml
+Bridge 1.0 Bridge.qml
+SectionTitle 1.0 SectionTitle.qml

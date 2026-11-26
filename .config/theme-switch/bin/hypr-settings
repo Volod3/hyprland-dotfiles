@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# hypr-settings — відкрити/закрити Quickshell-застосунок налаштувань Hyprland.
+#
+#   hypr-settings            toggle: відкрити, якщо закрито; закрити, якщо відкрито
+#   hypr-settings start      відкрити (якщо вже відкрито — нічого не робить)
+#   hypr-settings stop       закрити
+#   hypr-settings status     надрукувати стан (для биндів/скриптів)
+#   hypr-settings restart    перезапустити
+#
+# Лог: ~/.config/theme-switch/logs/hypr-settings.log
+set -uo pipefail
+
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}"
+BASE="$CFG/theme-switch"
+APP_DIR="$CFG/quickshell-settings"
+SHELL_QML="$APP_DIR/shell.qml"
+LOG="$BASE/logs/hypr-settings.log"
+UID_="$(id -u)"
+
+mkdir -p "$BASE/logs"
+log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*" >>"$LOG"; }
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID_}"
+export PATH="$PATH:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin"
+
+detect_wayland() {
+  if [ -n "${WAYLAND_DISPLAY:-}" ]; then printf '%s\n' "$WAYLAND_DISPLAY"; return 0; fi
+  local f
+  for f in "$XDG_RUNTIME_DIR"/wayland-*; do
+    case "$f" in *.lock) continue ;; esac
+    [ -S "$f" ] && { printf '%s\n' "$(basename "$f")"; return 0; }
+  done
+  return 1
+}
+
+detect_sig() {
+  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+    printf '%s\n' "$HYPRLAND_INSTANCE_SIGNATURE"; return 0
+  fi
+  local d s
+  for d in "$XDG_RUNTIME_DIR"/hypr/*/; do
+    [ -S "$d/.socket.sock" ] || continue
+    s="$(basename "$d")"
+    if HYPRLAND_INSTANCE_SIGNATURE="$s" hyprctl monitors -j >/dev/null 2>&1; then
+      printf '%s\n' "$s"; return 0
+    fi
+  done
+  return 1
+}
+
+ensure_env() {
+  local sig wl
+  if sig="$(detect_sig)"; then export HYPRLAND_INSTANCE_SIGNATURE="$sig"; fi
+  if wl="$(detect_wayland)"; then export WAYLAND_DISPLAY="$wl"; fi
+  if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+  fi
+}
+
+pid_of() {
+  pgrep -f -- "qs -p $SHELL_QML" 2>/dev/null | head -n1
+}
+
+is_running() { [ -n "$(pid_of)" ]; }
+
+# Скло: Hyprland має блюрити шар застосунку (layer_rule діє лише в поточній сесії,
+# тому додаємо її при кожному старті один раз — маркер на сигнатуру інстансу).
+ensure_blur_rule() {
+  local sig marker want="blur-hypr-settings"
+  sig="${HYPRLAND_INSTANCE_SIGNATURE:-x}"
+  marker="/tmp/hypr-settings-layerrule-$sig"
+  [ -f "$marker" ] && return 0
+  if hyprctl eval "hl.layer_rule({ name = \"$want\", match = { namespace = \"^hypr-settings\$\" }, blur = true, ignore_alpha = 0.1 })" >/dev/null 2>&1; then
+    : >"$marker"
+    log "layer_rule blur-hypr-settings -> ok"
+  else
+    log "layer_rule blur-hypr-settings -> failed (скло без блюру)"
+  fi
+}
+
+do_start() {
+  ensure_env
+  if is_running; then
+    log "start: вже відкрито (pid $(pid_of))"
+    return 0
+  fi
+  if [ ! -f "$SHELL_QML" ]; then
+    log "start: немає $SHELL_QML"
+    echo "hypr-settings: немає $SHELL_QML" >&2
+    return 1
+  fi
+  ensure_blur_rule
+  log "start: HYPR=${HYPRLAND_INSTANCE_SIGNATURE:-—} WAYLAND=${WAYLAND_DISPLAY:-—}"
+  setsid qs -p "$SHELL_QML" >>"$LOG" 2>&1 &
+  disown 2>/dev/null || true
+  local i
+  for i in $(seq 1 40); do
+    is_running && { log "started pid $(pid_of)"; return 0; }
+    sleep 0.1
+  done
+  log "start failed: процес не з'явився"
+  echo "hypr-settings: не вдалося запустити qs (див. $LOG)" >&2
+  return 1
+}
+
+do_stop() {
+  local pid
+  pid="$(pid_of)"
+  if [ -z "$pid" ]; then
+    log "stop: не запущено"
+    return 0
+  fi
+  kill "$pid" 2>/dev/null
+  local i
+  for i in $(seq 1 25); do
+    is_running || { log "stopped pid $pid"; return 0; }
+    sleep 0.1
+  done
+  kill -9 "$pid" 2>/dev/null
+  log "stopped pid $pid (SIGKILL)"
+}
+
+case "${1:-toggle}" in
+  start)   do_start ;;
+  stop)    do_stop ;;
+  restart) do_stop; do_start ;;
+  status)  if is_running; then echo "running pid $(pid_of)"; else echo "stopped"; fi ;;
+  toggle|"")
+    if is_running; then do_stop; else do_start; fi ;;
+  *)
+    echo "usage: $(basename "$0") [toggle|start|stop|restart|status]" >&2
+    exit 2 ;;
+esac

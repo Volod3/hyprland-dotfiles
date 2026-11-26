@@ -1,0 +1,421 @@
+#!/usr/bin/env bash
+# game-mode — Hyprland performance/gaming mode with full state save & restore.
+#
+# Usage: game-mode on|off|toggle|status [--waybar]|auto-check
+#
+# Saves the current Hyprland decoration/gaps/opacity values into
+#   ~/.config/theme-switch/state/game-mode.json
+# before applying the performance profile, so `off` restores exactly what
+# was there (theme-switch's blur/gaps/opacity survive a game session).
+#
+# Root-only knobs (NVIDIA persistence mode / clock locking) are attempted and
+# skipped with a log entry when the kernel refuses them — no sudo prompts.
+
+set -uo pipefail
+
+BASE="${XDG_CONFIG_HOME:-$HOME/.config}/theme-switch"
+STATE_FILE="$BASE/state/game-mode.json"
+FLAG_FILE="$BASE/state/game-mode.active"
+LOG_DIR="$BASE/logs"
+LOG_FILE="$LOG_DIR/game-mode.log"
+
+mkdir -p "$LOG_DIR" "$BASE/state" 2>/dev/null
+
+RT="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export XDG_RUNTIME_DIR="$RT"
+[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "$RT/bus" ] && \
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=$RT/bus"
+
+HYPR_SIG="${HYPRLAND_INSTANCE_SIGNATURE:-}"
+
+# ---------------------------------------------------------------- logging ----
+log() {
+  printf '%s [game-mode:%s] %s\n' "$(date '+%F %T')" "$$" "$*" >>"$LOG_FILE"
+}
+
+icon_path() { # NAME -> absolute icon path (empty when not installed)
+  local name="$1"
+  find /usr/share/icons "${XDG_DATA_HOME:-$HOME/.local/share}/icons" "$HOME/.icons" \
+    -maxdepth 5 \( -name "$name.svg" -o -name "$name.png" \) 2>/dev/null | head -n1
+}
+
+notify() { # title, body, preferred-icon
+  command -v notify-send >/dev/null 2>&1 || { log "notify: notify-send missing"; return 0; }
+  local title="$1" body="$2" want="${3:-input-gaming}" cand icon=''
+  local -a args=(-a "Game Mode" -u low -t 2500)
+  for cand in "$want" applications-games games-highscores applications-other; do
+    icon="$(icon_path "$cand")"
+    [ -n "$icon" ] && break
+  done
+  [ -n "$icon" ] && args+=(-i "$icon")
+  notify-send "${args[@]}" "$title" "$body" >>"$LOG_FILE" 2>&1 \
+    || log "notify: notify-send failed"
+}
+
+# ------------------------------------------------------------ hyprland ----
+hypr_raw() { HYPRLAND_INSTANCE_SIGNATURE="$HYPR_SIG" hyprctl "$@" 2>/dev/null; }
+
+detect_hypr() {
+  local cand d
+  local -a cands=()
+  [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && cands+=("$HYPRLAND_INSTANCE_SIGNATURE")
+  for d in "$RT"/hypr/*/; do
+    [ -d "$d" ] || continue
+    [ -S "$d/.socket.sock" ] || continue
+    cands+=("$(basename "$d")")
+  done
+  for cand in "${cands[@]}"; do
+    if HYPRLAND_INSTANCE_SIGNATURE="$cand" XDG_RUNTIME_DIR="$RT" \
+         hyprctl monitors -j 2>/dev/null | grep -q '"name"'; then
+      HYPR_SIG="$cand"
+      export HYPRLAND_INSTANCE_SIGNATURE="$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# opt_get NAME -> prints value, rc 0; rc 2 when option unknown; rc 1 on error
+opt_get() {
+  local name="$1" out v
+  out="$(hypr_raw getoption "$name")" || return 1
+  [ -n "$out" ] || return 1
+  case "$out" in
+    *"no such option"*) return 2 ;;
+  esac
+  v="$(printf '%s\n' "$out" | head -n1)"
+  case "$v" in
+    bool:*)  printf '%s' "${v#bool: }" ;;
+    int:*)   printf '%s' "${v#int: }" ;;
+    float:*) printf '%s' "${v#float: }" ;;
+    str:*)   printf '%s' "${v#str: }" ;;
+    *"gap data:"*) printf '%s' "$(printf '%s' "$v" | sed 's/.*data: *//' | awk '{print $1}')" ;;
+    *) printf '%s' "$v" ;;
+  esac
+}
+
+# opt_set NAME VALUE -> 0 ok, 1 fail
+#
+# Hyprland 0.57 with a Lua config no longer implements `hyprctl keyword`
+# (it answers "unknown request"), so values are applied through
+# `hyprctl eval 'hl.config({ ... })'`; builds without Lua eval fall back to
+# the classic keyword path.
+lua_val() { # print a Lua literal for a hyprctl-style value
+  local v="$1"
+  if [ "$v" = "true" ] || [ "$v" = "false" ]; then printf '%s' "$v"; return; fi
+  if [[ "$v" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then printf '%s' "$v"; return; fi
+  printf '"%s"' "$v"
+}
+
+lua_expr() { # NAME VALUE -> hl.config({["a"]={["b"]=<literal>}})
+  local name="$1" val="$2" open='' close='' part
+  local -a parts
+  IFS=':' read -r -a parts <<<"$name"
+  for part in "${parts[@]}"; do
+    open+="{[\"$part\"]="
+    close+="}"
+  done
+  printf 'hl.config(%s%s%s)' "$open" "$(lua_val "$val")" "$close"
+}
+
+opt_verify() { # NAME EXPECTED -> 0 if the live value matches
+  local got exp
+  got="$(opt_get "$1")" || return 1
+  exp="$2"
+  [ "$got" = "$exp" ] && return 0
+  if [[ "$got" =~ ^-?[0-9.]+$ ]] && [[ "$exp" =~ ^-?[0-9.]+$ ]]; then
+    awk -v a="$got" -v b="$exp" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(d<0.001)}'
+    return $?
+  fi
+  return 1
+}
+
+opt_set() {
+  local name="$1" val="$2" expr out
+  expr="$(lua_expr "$name" "$val")"
+
+  out="$(hypr_raw eval "$expr")" || out=""
+  opt_verify "$name" "$val" && return 0
+
+  # eval path missing/rejected -> classic keyword fallback
+  out="$(hypr_raw keyword "$name" "$val")" || out=""
+  if opt_verify "$name" "$val"; then
+    log "note: applied via keyword fallback: $name=$val"
+    return 0
+  fi
+  log "set failed: $name=$val (reply: ${out:-empty})"
+  return 1
+}
+
+# --------------------------------------------------------------- state ----
+# Options saved before entering game mode; restored verbatim on `off`.
+OPTS=(
+  decoration:blur:enabled
+  decoration:blur:size
+  decoration:blur:passes
+  decoration:blur:vibrancy
+  decoration:rounding
+  decoration:shadow:enabled
+  decoration:active_opacity
+  decoration:inactive_opacity
+  general:gaps_in
+  general:gaps_out
+  general:allow_tearing
+  animations:enabled
+  misc:vfr
+)
+
+save_state() {
+  local name val json='{}'
+  for name in "${OPTS[@]}"; do
+    if val="$(opt_get "$name")"; then
+      json="$(jq -c --arg k "$name" --arg v "$val" '. + {($k): $v}' <<<"$json")"
+    fi
+  done
+  jq -n --argjson v "$json" \
+        --arg sig "$HYPR_SIG" \
+        --arg at "$(date -Is)" \
+        '{saved_at: $at, hypr_sig: $sig, values: $v}' >"$STATE_FILE.tmp" \
+    && mv "$STATE_FILE.tmp" "$STATE_FILE" || { log "save_state: write failed"; return 1; }
+  log "saved state -> $STATE_FILE ($(jq -r '.values | length' "$STATE_FILE") options)"
+}
+
+restore_state() {
+  [ -s "$STATE_FILE" ] || { log "restore: no state file"; return 1; }
+  local name val ok=0 bad=0
+  while IFS=$'\t' read -r name val; do
+    [ -n "$name" ] || continue
+    if opt_set "$name" "$val"; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
+  done < <(jq -r '.values | to_entries[] | "\(.key)\t\(.value)"' "$STATE_FILE")
+  log "restore: $ok applied, $bad failed (from $STATE_FILE)"
+  [ "$ok" -gt 0 ]
+}
+
+is_active() { [ -f "$FLAG_FILE" ]; }
+
+# ------------------------------------------------------- static wallpaper ----
+# У ігровому режимі паралакс з cava — зайве навантаження: гасимо qs і ставимо
+# статичну картинку поточної теми через hyprpaper.
+monitor_name() {
+  hypr_raw monitors -j 2>/dev/null | python3 -c 'import json,sys;
+try: d=json.load(sys.stdin); print(d[0]["name"])
+except Exception: print("")' 2>/dev/null
+}
+
+wallpaper_static() {
+  local id img mon
+  id="$(cat "$BASE/state/current" 2>/dev/null || echo azure)"
+  img="$BASE/static/$id.png"
+  [ -f "$img" ] || img="$BASE/static/azure.png"
+  [ -f "$img" ] || { log "wallpaper: статичної картинки нема"; return 0; }
+
+  pkill -f "qs -p .*wallpapers_QS/.*/shell.qml" >/dev/null 2>&1
+  pkill -f "cava -p /tmp/cava_qs.conf" >/dev/null 2>&1
+  pkill -x hyprpaper >/dev/null 2>&1
+  sleep 0.3
+
+  mon="$(monitor_name)"; mon="${mon:-eDP-1}"
+  {
+    echo "preload = $img"
+    echo "wallpaper = $mon,$img"
+    echo "splash = false"
+    echo "ipc = on"
+  } > /tmp/hyprpaper-game.conf
+
+  setsid hyprpaper -c /tmp/hyprpaper-game.conf >/dev/null 2>&1 &
+  sleep 0.5
+  log "wallpaper: статична картинка ($img) на $mon, паралакс/cava зупинено"
+}
+
+wallpaper_back() {
+  pkill -x hyprpaper >/dev/null 2>&1
+  rm -f /tmp/hyprpaper-game.conf
+  # шукаємо саме наш шпалерний shell, а не будь-який qs
+  if ! pgrep -f "qs -p .*wallpapers_QS/.*/shell.qml" >/dev/null 2>&1; then
+    setsid "$BASE/bin/qs-start" >>"$LOG_FILE" 2>&1 &
+    sleep 0.8
+  fi
+  log "wallpaper: паралакс повернено (qs)"
+}
+
+# ----------------------------------------------------------------- gpu ----
+gpu_on() {
+  command -v nvidia-smi >/dev/null 2>&1 || { log "gpu: nvidia-smi missing"; return 0; }
+  local out rc min_clk max_clk
+
+  out="$(nvidia-smi -pm 1 2>&1)"; rc=$?
+  if [ $rc -eq 0 ]; then
+    log "gpu: persistence mode enabled"
+  else
+    log "gpu: 'nvidia-smi -pm 1' skipped (needs root): $(printf '%s' "$out" | head -n1)"
+  fi
+
+  read -r min_clk max_clk <<<"$(nvidia-smi --query-gpu=clocks.min_gr,clocks.max_gr \
+      --format=csv,noheader,nounits 2>/dev/null | tr -d ' ' | tr ',' ' ')"
+  if [ -n "${min_clk:-}" ] && [ -n "${max_clk:-}" ]; then
+    out="$(nvidia-smi -lgc "$min_clk,$max_clk" 2>&1)"; rc=$?
+    if [ $rc -eq 0 ]; then
+      log "gpu: clocks locked to ${min_clk}-${max_clk} MHz"
+    else
+      log "gpu: 'nvidia-smi -lgc ${min_clk},${max_clk}' skipped (needs root): $(printf '%s' "$out" | head -n1)"
+    fi
+  fi
+
+  if [ -n "${GAMEMODE_POWER_LIMIT:-}" ]; then
+    out="$(nvidia-smi -pl "$GAMEMODE_POWER_LIMIT" 2>&1)"; rc=$?
+    if [ $rc -eq 0 ]; then
+      log "gpu: power limit set to ${GAMEMODE_POWER_LIMIT}W"
+    else
+      log "gpu: 'nvidia-smi -pl ${GAMEMODE_POWER_LIMIT}' skipped (needs root): $(printf '%s' "$out" | head -n1)"
+    fi
+  fi
+}
+
+gpu_off() {
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+  local out rc
+  out="$(nvidia-smi -rgc 2>&1)"; rc=$?
+  [ $rc -eq 0 ] && log "gpu: clocks reset" || log "gpu: 'nvidia-smi -rgc' skipped (needs root): $(printf '%s' "$out" | head -n1)"
+}
+
+# --------------------------------------------------------------- actions ----
+do_on() {
+  detect_hypr || { log "on: no live Hyprland instance"; echo "game-mode: Hyprland instance not found" >&2; return 1; }
+  if is_active; then
+    log "on: already active, nothing to do"
+    return 0
+  fi
+
+  save_state || { echo "game-mode: could not save state" >&2; return 1; }
+
+  local -A game=(
+    [decoration:blur:enabled]=false
+    [decoration:shadow:enabled]=false
+    [decoration:rounding]=0
+    [general:gaps_in]=0
+    [general:gaps_out]=0
+    [decoration:active_opacity]=1.0
+    [decoration:inactive_opacity]=1.0
+    [animations:enabled]=false
+    [misc:vfr]=true
+    [general:allow_tearing]=true
+  )
+  local k ok=0 bad=0
+  for k in decoration:blur:enabled decoration:shadow:enabled decoration:rounding \
+           general:gaps_in general:gaps_out decoration:active_opacity \
+           decoration:inactive_opacity animations:enabled misc:vfr general:allow_tearing; do
+    if opt_set "$k" "${game[$k]}"; then
+      ok=$((ok + 1))
+    else
+      case "$k" in
+        misc:vfr) log "on: misc:vfr unsupported by this Hyprland build, skipped" ;;
+        *) bad=$((bad + 1)) ;;
+      esac
+    fi
+  done
+
+  gpu_on
+
+  if [ "$ok" -eq 0 ]; then
+    log "on: nothing could be applied, aborting (bad=$bad)"
+    rm -f "$FLAG_FILE"
+    notify "Game Mode: failed" "No Hyprland option could be applied — see $LOG_FILE" "dialog-error"
+    echo "game-mode: no option could be applied, see $LOG_FILE" >&2
+    return 1
+  fi
+
+  date -Is >"$FLAG_FILE"
+  wallpaper_static
+  log "on: applied ($ok ok, $bad failed) sig=$HYPR_SIG"
+  notify "Ігровий режим: УВІМКНЕНО" "Блюр/тіні/анімації вимкнено · gaps 0 · статичні шпалери" "input-gaming"
+  return 0
+}
+
+do_off() {
+  detect_hypr || { log "off: no live Hyprland instance"; echo "game-mode: Hyprland instance not found" >&2; return 1; }
+  if ! is_active; then
+    log "off: not active, nothing to do"
+    return 0
+  fi
+
+  restore_state
+  gpu_off
+  wallpaper_back
+  rm -f "$FLAG_FILE"
+  log "off: restored previous session state"
+  notify "Ігровий режим: вимкнено" "Блюр, gaps і прозорість повернено · паралакс увімкнено" "input-gaming"
+  return 0
+}
+
+fullscreen_count() {
+  detect_hypr || { echo 0; return 1; }
+  hypr_raw clients -j 2>/dev/null | jq '[.[] | select((.fullscreen // 0) >= 1 and (.mapped // true) and ((.hidden // false) | not))] | length' 2>/dev/null || echo 0
+}
+
+do_status() {
+  local want_waybar=0
+  [ "${1:-}" = "--waybar" ] && want_waybar=1
+
+  local active=0 blur="?" gaps="?" fs=0
+  if detect_hypr; then
+    blur="$(opt_get decoration:blur:enabled || echo '?')"
+    gaps="$(opt_get general:gaps_out || echo '?')"
+    fs="$(fullscreen_count)"
+  fi
+  is_active && active=1
+
+  if [ "$want_waybar" -eq 1 ]; then
+    local text tooltip class
+    if [ "$active" -eq 1 ]; then
+      text=""; class="active"
+      tooltip="Ігровий режим УВІМКНЕНО — блюр/анімації/тіні вимкнено, gaps 0, tearing on${fs:+, fullscreen вікон: $fs}"
+    else
+      text=""; class="inactive"
+      tooltip="Ігровий режим вимкнено — блюр ${blur}, gaps ${gaps}, анімації увімкнено"
+    fi
+    jq -cn --arg t "$text" --arg tp "$tooltip" --arg c "$class" \
+      '{text: $t, tooltip: $tp, class: $c}'
+    return 0
+  fi
+
+  if [ "$active" -eq 1 ]; then
+    printf 'game mode: ON\n  blur=%s shadow=off rounding=0 gaps=0 opacity=1.0 tearing=on animations=off\n  saved state: %s\n  fullscreen windows: %s\n' \
+      "$blur" "$STATE_FILE" "$fs"
+  else
+    printf 'game mode: OFF\n  blur=%s gaps_out=%s animations=on\n  fullscreen windows: %s\n' \
+      "$blur" "$gaps" "$fs"
+  fi
+}
+
+do_auto_check() {
+  local fs
+  fs="$(fullscreen_count)"
+  if [ "${fs:-0}" -ge 1 ]; then
+    do_on
+  else
+    do_off
+  fi
+}
+
+# ------------------------------------------------------------------ main ----
+case "${1:-status}" in
+  on)         do_on ;;
+  off)        do_off ;;
+  toggle)     if is_active; then do_off; else do_on; fi ;;
+  status)     shift || true; do_status "${1:-}" ;;
+  auto-check) do_auto_check ;;
+  wallpaper)  wallpaper_static ;;   # перемалювати статичні шпалери поточної теми
+  *)
+    cat >&2 <<EOF
+usage: $(basename "$0") on|off|toggle|status [--waybar]|auto-check
+
+  on          save current Hyprland look, then apply the performance profile
+  off         restore the exact values saved by the last 'on'
+  toggle      switch between the two
+  status      human readable state (--waybar prints JSON for waybar)
+  auto-check  on if any window is fullscreen, off otherwise (used by game-watch)
+state: $STATE_FILE
+log:   $LOG_FILE
+EOF
+    exit 2 ;;
+esac

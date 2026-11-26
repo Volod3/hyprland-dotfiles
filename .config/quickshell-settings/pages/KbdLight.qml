@@ -1,0 +1,1 @@
+../../wallpapers_QS/shared/KbdLight.qml

@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""popctl — бекенд для вікон waybar/бокової панелі (мережа, Bluetooth, система).
+
+Стан (JSON у stdout):
+  popctl net                      Ethernet + Wi-Fi: пристрої, мережі, поточне з'єднання
+  popctl bt                       Bluetooth: адаптер, пристрої (спарені й знайдені)
+  popctl sys                      батарея, режим живлення, CPU/RAM/диск/температура/GPU, процеси
+
+Дії (друкують {"ok": true|false, "msg": "..."}):
+  popctl wifi on|off
+  popctl wifi-connect SSID [PASSWORD]
+  popctl net-down NAME            відключити з'єднання (за назвою профілю)
+  popctl net-up NAME
+  popctl bt-power on|off
+  popctl bt-scan                  шукати пристрої ~8 с
+  popctl bt-connect MAC           спарити (якщо треба), довіряти, підключити
+  popctl bt-disconnect MAC
+  popctl bt-remove MAC
+  popctl profile performance|balanced|power-saver
+  popctl kill PID
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+
+def run(cmd, timeout=6, inp=None):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, input=inp)
+        return r.returncode, r.stdout, r.stderr
+    except Exception as e:  # noqa: BLE001
+        return 1, "", str(e)
+
+
+def out(obj):
+    print(json.dumps(obj, ensure_ascii=False))
+
+
+def nm_split(line):
+    """Розбір рядка `nmcli -t` з урахуванням екранованих двокрапок."""
+    return [p.replace("\\:", ":") for p in re.split(r"(?<!\\):", line)]
+
+
+# ─────────────────────────── мережа ───────────────────────────
+def net():
+    res = {"wifiHw": False, "wifiOn": False, "wifiBlacklisted": False,
+           "ethernet": [], "wifi": [], "active": None}
+    if os.path.exists("/etc/modprobe.d/blacklist-wifi.conf"):
+        res["wifiBlacklisted"] = True
+    _, o, _ = run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"])
+    for line in o.splitlines():
+        dev, typ, state, con = (nm_split(line) + ["", "", "", ""])[:4]
+        if typ == "ethernet":
+            speed = ""
+            try:
+                speed = open(f"/sys/class/net/{dev}/speed").read().strip()
+            except OSError:
+                pass
+            ip = ""
+            _, io, _ = run(["nmcli", "-g", "IP4.ADDRESS", "device", "show", dev])
+            ip = io.strip().split("|")[0].split("/")[0] if io.strip() else ""
+            e = {"dev": dev, "connected": state.startswith("connected"), "name": con,
+                 "speed": speed, "ip": ip}
+            res["ethernet"].append(e)
+            if e["connected"] and not res["active"]:
+                res["active"] = {"type": "ethernet", "name": con, "ip": ip}
+        elif typ == "wifi":
+            res["wifiHw"] = True
+    _, r, _ = run(["nmcli", "radio", "wifi"])
+    res["wifiOn"] = r.strip() == "enabled"
+    if res["wifiHw"] and res["wifiOn"]:
+        _, known_o, _ = run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"])
+        known = {nm_split(l)[0] for l in known_o.splitlines() if l.endswith(":802-11-wireless")}
+        _, o, _ = run(["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list"], timeout=10)
+        seen = {}
+        for line in o.splitlines():
+            inuse, ssid, sig, sec = (nm_split(line) + ["", "", "", ""])[:4]
+            if not ssid:
+                continue
+            n = {"ssid": ssid, "signal": int(sig or 0), "secure": bool(sec and sec != "--"),
+                 "active": inuse.strip() == "*", "known": ssid in known}
+            if ssid not in seen or n["signal"] > seen[ssid]["signal"] or n["active"]:
+                seen[ssid] = n
+        res["wifi"] = sorted(seen.values(), key=lambda n: (not n["active"], not n["known"], -n["signal"]))
+        act = next((n for n in res["wifi"] if n["active"]), None)
+        if act and not res["active"]:
+            res["active"] = {"type": "wifi", "name": act["ssid"], "signal": act["signal"]}
+    out(res)
+
+
+# ─────────────────────────── Bluetooth ───────────────────────────
+def bt_info(mac):
+    _, o, _ = run(["bluetoothctl", "info", mac], timeout=4)
+    d = {"mac": mac, "name": mac, "connected": False, "paired": False, "trusted": False,
+         "icon": "", "battery": -1}
+    for line in o.splitlines():
+        line = line.strip()
+        if line.startswith("Alias:"):
+            d["name"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Connected:"):
+            d["connected"] = line.endswith("yes")
+        elif line.startswith("Paired:"):
+            d["paired"] = line.endswith("yes")
+        elif line.startswith("Trusted:"):
+            d["trusted"] = line.endswith("yes")
+        elif line.startswith("Icon:"):
+            d["icon"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Battery Percentage:"):
+            m = re.search(r"\((\d+)\)", line)
+            if m:
+                d["battery"] = int(m.group(1))
+    return d
+
+
+def bt():
+    res = {"available": False, "powered": False, "discovering": False, "devices": []}
+    if not shutil.which("bluetoothctl"):
+        return out(res)
+    _, o, _ = run(["bluetoothctl", "show"], timeout=4)
+    if "Controller" not in o:
+        return out(res)
+    res["available"] = True
+    res["powered"] = "Powered: yes" in o
+    res["discovering"] = "Discovering: yes" in o
+    if res["powered"]:
+        _, o, _ = run(["bluetoothctl", "devices"], timeout=4)
+        macs = re.findall(r"Device ((?:[0-9A-F]{2}:){5}[0-9A-F]{2})", o)
+        devs = [bt_info(m) for m in macs]
+        # безіменні знайдені пристрої (лише MAC) — шум, ховаємо
+        devs = [d for d in devs if d["paired"] or d["name"].replace("-", ":") != d["mac"]]
+        res["devices"] = sorted(devs, key=lambda d: (not d["connected"], not d["paired"], d["name"].lower()))
+    out(res)
+
+
+# ─────────────────────────── система ───────────────────────────
+def read(p, d=""):
+    try:
+        return open(p).read().strip()
+    except OSError:
+        return d
+
+
+def cpu_percent():
+    def snap():
+        f = open("/proc/stat").readline().split()[1:]
+        v = list(map(int, f))
+        return sum(v), v[3] + v[4]
+    t1, i1 = snap()
+    time.sleep(0.25)
+    t2, i2 = snap()
+    return round(100 * (1 - (i2 - i1) / max(1, t2 - t1)))
+
+
+def sysinfo():
+    res = {}
+    bat = next((f"/sys/class/power_supply/{b}" for b in sorted(os.listdir("/sys/class/power_supply"))
+                if b.startswith("BAT")), None)
+    if bat:
+        pct = int(read(bat + "/capacity", "0") or 0)
+        status = read(bat + "/status", "Unknown")
+        pw = read(bat + "/power_now") or ""
+        watts = round(int(pw) / 1e6, 1) if pw.isdigit() else 0
+        if not watts:
+            cur, volt = read(bat + "/current_now"), read(bat + "/voltage_now")
+            if cur.isdigit() and volt.isdigit():
+                watts = round(int(cur) * int(volt) / 1e12, 1)
+        full, design = read(bat + "/energy_full") or read(bat + "/charge_full"), read(bat + "/energy_full_design") or read(bat + "/charge_full_design")
+        health = round(100 * int(full) / int(design)) if full.isdigit() and design.isdigit() and int(design) else -1
+        eta = ""
+        en, ef = read(bat + "/energy_now") or read(bat + "/charge_now"), full
+        if watts > 0.5 and en.isdigit() and ef.isdigit():
+            if status == "Discharging":
+                h = int(en) / (watts * 1e6)
+            elif status == "Charging":
+                h = (int(ef) - int(en)) / (watts * 1e6)
+            else:
+                h = 0
+            if h > 0:
+                eta = f"{int(h)} год {int((h % 1) * 60)} хв"
+        res["battery"] = {"pct": pct, "status": status, "watts": watts, "health": health, "eta": eta,
+                          "ac": read("/sys/class/power_supply/ACAD/online", "0") == "1"}
+    _, p, _ = run(["powerprofilesctl", "get"], timeout=3)
+    res["profile"] = p.strip()
+    res["cpu"] = cpu_percent()
+    mem = {}
+    for line in open("/proc/meminfo"):
+        k, v = line.split(":")
+        mem[k] = int(v.split()[0])
+    res["ram"] = {"used": round((mem["MemTotal"] - mem["MemAvailable"]) / 1048576, 1),
+                  "total": round(mem["MemTotal"] / 1048576, 1)}
+    st = os.statvfs("/")
+    res["disk"] = {"used": round((st.f_blocks - st.f_bfree) * st.f_frsize / 1e9),
+                   "total": round(st.f_blocks * st.f_frsize / 1e9)}
+    temp = 0
+    for h in os.listdir("/sys/class/hwmon"):
+        if read(f"/sys/class/hwmon/{h}/name") == "coretemp":
+            temp = round(int(read(f"/sys/class/hwmon/{h}/temp1_input", "0")) / 1000)
+    res["temp"] = temp
+    res["gpu"] = None
+    if shutil.which("nvidia-smi"):
+        c, o, _ = run(["nvidia-smi", "--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total",
+                       "--format=csv,noheader,nounits"], timeout=3)
+        if c == 0 and o.strip():
+            n, u, t, mu, mt = [x.strip() for x in o.strip().split("\n")[0].split(",")]
+            res["gpu"] = {"name": n.replace("NVIDIA GeForce ", ""), "util": round(float(u)), "temp": round(float(t)),
+                          "memUsed": round(float(mu)), "memTotal": round(float(mt))}
+    up = float(read("/proc/uptime", "0").split()[0])
+    res["uptime"] = f"{int(up // 3600)} год {int(up % 3600 // 60)} хв"
+    # top з двома ітераціями: друга показує ПОТОЧНЕ навантаження (ps дає середнє за весь час)
+    _, o, _ = run(["env", "LC_ALL=C", "top", "-b", "-n", "2", "-d", "0.4", "-o", "%CPU", "-w", "200"], timeout=4)
+    blocks = o.split("\n\n")
+    last = o[o.rfind("PID"):] if "PID" in o else ""
+    procs = []
+    for line in last.splitlines()[1:]:
+        f = line.split()
+        if len(f) < 12 or f[11] in ("top", "popctl", "python3"):
+            continue
+        try:
+            res_kb = f[5]
+            mem = float(res_kb[:-1]) * (1024 if res_kb.endswith("g") else 1) if res_kb[-1] in "mg" else int(res_kb) / 1024
+            procs.append({"pid": int(f[0]), "name": " ".join(f[11:])[:24],
+                          "cpu": float(f[8].replace(",", ".")), "mem": round(mem)})
+        except (ValueError, IndexError):
+            continue
+        if len(procs) >= 6:
+            break
+    res["procs"] = procs
+    out(res)
+
+
+# ─────────────────────────── дії ───────────────────────────
+def act(ok, msg=""):
+    out({"ok": bool(ok), "msg": msg.strip()[:200]})
+
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        print(__doc__)
+        return
+    c = a[0]
+    if c == "net":
+        return net()
+    if c == "bt":
+        return bt()
+    if c == "sys":
+        return sysinfo()
+    if c == "wifi":
+        r, o, e = run(["nmcli", "radio", "wifi", "on" if a[1:2] == ["on"] else "off"])
+        return act(r == 0, e)
+    if c == "wifi-connect":
+        cmd = ["nmcli", "device", "wifi", "connect", a[1]]
+        if len(a) > 2 and a[2]:
+            cmd += ["password", a[2]]
+        r, o, e = run(cmd, timeout=30)
+        return act(r == 0, o + e)
+    if c in ("net-down", "net-up"):
+        r, o, e = run(["nmcli", "connection", "down" if c == "net-down" else "up", a[1]], timeout=20)
+        return act(r == 0, o + e)
+    if c == "bt-power":
+        r, o, e = run(["bluetoothctl", "power", a[1]], timeout=6)
+        return act(r == 0, o + e)
+    if c == "bt-scan":
+        r, o, e = run(["bluetoothctl", "--timeout", "8", "scan", "on"], timeout=12)
+        return act(True, "")
+    if c == "bt-connect":
+        mac = a[1]
+        info = bt_info(mac)
+        if not info["paired"]:
+            run(["bluetoothctl", "pair", mac], timeout=20)
+        if not info["trusted"]:
+            run(["bluetoothctl", "trust", mac], timeout=6)
+        r, o, e = run(["bluetoothctl", "connect", mac], timeout=20)
+        return act("successful" in o.lower() or r == 0, o + e)
+    if c == "bt-disconnect":
+        r, o, e = run(["bluetoothctl", "disconnect", a[1]], timeout=10)
+        return act(r == 0, o + e)
+    if c == "bt-remove":
+        r, o, e = run(["bluetoothctl", "remove", a[1]], timeout=10)
+        return act(r == 0, o + e)
+    if c == "profile":
+        r, o, e = run(["powerprofilesctl", "set", a[1]])
+        return act(r == 0, e)
+    if c == "kill":
+        r, o, e = run(["kill", str(int(a[1]))])
+        return act(r == 0, e)
+    act(False, "невідома команда " + c)
+
+
+if __name__ == "__main__":
+    main()

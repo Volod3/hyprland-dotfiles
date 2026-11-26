@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""gamemode — автоматичний ігровий режим для цього робочого столу.
+
+  gamemode on | off | toggle      увімкнути / вимкнути вручну
+  gamemode status                 "on" / "off" (для плитки бокової панелі)
+  gamemode watch                  стежити за вікнами Hyprland і вмикати/вимикати самостійно
+                                  (запускається з автозапуску hyprland.lua)
+
+У грі:  пет ховається (процес зупиняється), модель Ollama вивантажується з відеопам'яті,
+        паралакс-шпалери (і cava, годинник) замінюються статичною картинкою через hyprpaper,
+        вимикаються блюр, тіні та анімації Hyprland.
+Після:  усе повертається як було (значення Hyprland — ті, що були до гри).
+
+Що вважається грою (суворо, щоб не вмикалось просто так):
+  • вікно Steam-гри steam_app_<номер>, gamescope, *.exe (Wine/Proton), відомі ігрові класи;
+  • вікно програми з steamapps/common, якщо воно велике (≥ 60% екрана) або на весь екран.
+  НЕ гра: службові вікна Steam (steam, steamwebhelper, steam_proton — «запуск Proton»), будь-які інші
+  програми навіть на весь екран (браузер, плеєр, редактор...).
+Затримки: увімкнення — гра має протриматись 4 с; вимкнення — через 8 с після закриття
+(інакше режим «блимав», поки гра відкриває й закриває службові вікна).
+Ручне «on» не вимикається автоматично, доки не скажеш «off».
+"""
+import glob
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+QS = os.path.join(HOME, ".config/wallpapers_QS")
+STATE = os.path.join(HOME, ".cache/gamemode.json")
+LOG = os.path.join(HOME, ".cache/gamemode.log")
+PARALLAX = os.path.join(QS, "bg_parallax_MDRG/shell.qml")
+PET = os.path.join(QS, "bg_pet/shell.qml")
+STATIC = os.path.join(QS, "bg_parallax_MDRG/assets/images/wp4.jpg")
+
+GAME_CLASS = re.compile(r"^(steam_app_[1-9]\d*|gamescope|.*\.exe|minecraft.*|sober|org\.vinegarhq\.sober|roblox.*|osu!?|retroarch|"
+                        r"hl2_linux|csgo_linux64|cs2|dota2|factorio|terraria.*|stardew.*|hollow_knight.*|celeste.*)$", re.I)
+NOT_GAME_CLASS = re.compile(r"^(steam|steamwebhelper|steam_proton|steam_app_0|steamtinkerlaunch|protonup.*|lutris|heroic|"
+                            r"net\.lutris\.lutris|com\.heroicgameslauncher\.hgl|bottles|.*installer.*|.*setup.*)$", re.I)
+NOT_GAME = re.compile(r"(chrome|chromium|firefox|brave|vivaldi|opera|mpv|vlc|haruna|celluloid|kitty|alacritty|konsole|"
+                      r"code|kate|dolphin|gwenview|okular|telegram|discord|obs|spectacle|zen)", re.I)
+HYPR_OPTS = ["decoration:blur:enabled", "decoration:shadow:enabled", "animations:enabled", "misc:vfr"]
+
+
+
+def log(msg):
+    try:
+        with open(LOG, "a") as f:
+            f.write(time.strftime("%F %T ") + msg + "\n")
+    except OSError:
+        pass
+
+
+def sh(cmd, timeout=6):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def spawn(cmd):
+    subprocess.Popen(["setsid", "-f"] + cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def load():
+    try:
+        return json.load(open(STATE))
+    except (OSError, ValueError):
+        return {}
+
+
+def save(d):
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    json.dump(d, open(STATE, "w"), indent=1)
+
+
+def hypr_get(name):
+    out = sh(["hyprctl", "getoption", name, "-j"])
+    try:
+        j = json.loads(out)
+        for k in ("bool", "int", "float", "str"):
+            if k in j:
+                return j[k]
+    except ValueError:
+        pass
+    return None
+
+
+def hypr_set(name, value):
+    parts = name.split(":")
+    lua_val = "true" if value in (1, True, "1", "true") else "false"
+    expr = "".join('{["%s"]=' % p for p in parts) + lua_val + "}" * len(parts)
+    sh(["hyprctl", "eval", "hl.config(%s)" % expr])
+
+
+def pgrep(path):
+    return sh(["pgrep", "-f", "^qs -p " + re.escape(path) + "$"]).split()
+
+
+def drop_ollama_cache():
+    """Викинути з оперативної пам'яті кеш файлів моделі Ollama (~3 ГБ) — без root, через posix_fadvise.
+    Модель просто довше завантажиться при наступній розмові з петом."""
+    freed = 0
+    for f in glob.glob("/var/lib/ollama/blobs/*") + glob.glob(os.path.join(HOME, ".ollama/models/blobs/*")):
+        try:
+            fd = os.open(f, os.O_RDONLY)
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                freed += os.path.getsize(f)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+    return freed
+
+
+def on(manual=False):
+    st = load()
+    if st.get("active"):
+        if manual:
+            st["manual"] = True
+            save(st)
+        return
+    st = {"active": True, "manual": manual, "since": time.time(),
+          "hypr": {o: hypr_get(o) for o in HYPR_OPTS},
+          "pet": bool(pgrep(PET)), "parallax": bool(pgrep(PARALLAX)),
+          "profile": sh(["powerprofilesctl", "get"]).strip(),
+          "dnd": sh(["swaync-client", "-D"]).strip() == "true",
+          "idle": bool(sh(["pgrep", "-x", "hypridle"]).strip())}
+    save(st)
+    for o in HYPR_OPTS:
+        hypr_set(o, o == "misc:vfr")        # vfr лишаємо увімкненим (менше зайвих кадрів робочого столу)
+    sh(["powerprofilesctl", "set", "performance"])
+    sh(["swaync-client", "-dn"])                       # «Не турбувати»
+    # Mission Center лишається у фоні після закриття вікна й їсть 5–7% процесора — гасимо, якщо вікна немає
+    if "missioncenter" not in sh(["hyprctl", "clients", "-j"]).lower():
+        sh(["pkill", "-x", "missioncenter"])
+        sh(["pkill", "-x", "missioncenter-m"])
+    sh(["pkill", "-x", "hypridle"])                    # не засинати й не гасити екран посеред гри
+
+    if st["pet"]:
+        sh(["pkill", "-f", "^qs -p " + re.escape(PET) + "$"])
+    if st["parallax"]:
+        sh(["pkill", "-f", "^qs -p " + re.escape(PARALLAX) + "$"])
+        if os.path.exists(STATIC) and not sh(["pgrep", "-x", "hyprpaper"]).strip():
+            spawn(["hyprpaper"])
+    # вивантажити моделі з відеопам'яті (пет усе одно вимкнений)
+    for line in sh(["ollama", "ps"]).splitlines()[1:]:
+        if line.split():
+            sh(["ollama", "stop", line.split()[0]], timeout=10)
+    time.sleep(0.5)
+    freed = drop_ollama_cache() // (1024 * 1024)
+    sh(["pkill", "-f", "cava -p .*/waybar-cava.conf"])     # хвилька в waybar (cava.sh побачить гру й засне)
+    log("звільнено кеш моделі ~%d МБ" % freed)
+    sh(["qs", "-p", os.path.join(HOME, ".config/wallpapers_QS/bg_osd/shell.qml"), "ipc", "call", "osd", "event", "game",
+        "Ігровий режим", "звільнено %d МБ · ефекти вимкнено · «Потужність»" % freed])
+    log("ON" + (" (вручну)" if manual else ""))
+
+
+def off():
+    st = load()
+    if not st.get("active"):
+        return
+    for o, v in (st.get("hypr") or {}).items():
+        if v is not None:
+            hypr_set(o, v)
+    if st.get("profile"):
+        sh(["powerprofilesctl", "set", st["profile"]])
+    if not st.get("dnd"):
+        sh(["swaync-client", "-df"])
+    if st.get("idle", True) and not sh(["pgrep", "-x", "hypridle"]).strip():
+        spawn(["hypridle", "-c", os.path.join(HOME, ".config/hypr/hypridle.conf")])
+
+    # шпалери: повертаємо паралакс лише якщо гра його вимикала (у «Економії» лишаються статичні)
+    if st.get("parallax", True) and not pgrep(PARALLAX):
+        sh(["pkill", "-x", "hyprpaper"])
+        spawn(["qs", "-p", PARALLAX])
+    if st.get("pet", True) and not pgrep(PET):
+        spawn(["qs", "-p", PET])
+    sh(["pkill", "-f", "cava -p .*/waybar-cava.conf"])     # щоб хвилька відновилась одразу, а не через 20 с
+    save({"active": False})
+    sh(["qs", "-p", os.path.join(HOME, ".config/wallpapers_QS/bg_osd/shell.qml"), "ipc", "call", "osd", "event", "game",
+        "Ігровий режим вимкнено", "пет, шпалери й ефекти повернулись"])
+    log("OFF")
+
+
+def is_game(c):
+    cls = c.get("class") or c.get("initialClass") or ""
+    if not c.get("mapped", True) or c.get("hidden", False) or NOT_GAME_CLASS.match(cls) or NOT_GAME.search(cls):
+        return False
+    if GAME_CLASS.match(cls):
+        return True
+    # програма з бібліотеки Steam — лише велике/повноекранне вікно (не лаунчер чи інсталятор)
+    try:
+        exe = os.readlink(f"/proc/{c.get('pid')}/exe")
+    except OSError:
+        exe = ""
+    if "/steamapps/common/" in exe:
+        w, h = (c.get("size") or [0, 0])[:2]
+        if int(c.get("fullscreen") or 0) > 0 or w * h >= 0.6 * 1920 * 1080:
+            return True
+    return False
+
+
+def games():
+    try:
+        clients = json.loads(sh(["hyprctl", "clients", "-j"]))
+    except ValueError:
+        return None
+    return [c.get("class") for c in clients if is_game(c)]
+
+
+_seen = {"since": 0.0, "gone": 0.0}
+ON_DELAY, OFF_DELAY = 4.0, 8.0
+
+
+def evaluate():
+    """Повертає True, якщо треба перевірити ще раз пізніше (йде відлік затримки)."""
+    g = games()
+    if g is None:
+        return False
+    st = load()
+    now = time.time()
+    if g:
+        _seen["gone"] = 0.0
+        if st.get("active"):
+            return False
+        if not _seen["since"]:
+            _seen["since"] = now
+        if now - _seen["since"] >= ON_DELAY:
+            log("гра: %s" % g[:3])
+            on()
+            _seen["since"] = 0.0
+            return False
+        return True
+    _seen["since"] = 0.0
+    if st.get("active") and not st.get("manual"):
+        if not _seen["gone"]:
+            _seen["gone"] = now
+        if now - _seen["gone"] >= OFF_DELAY:
+            off()
+            _seen["gone"] = 0.0
+            return False
+        return True
+    _seen["gone"] = 0.0
+    return False
+
+
+def watch():
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    rt = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    path = f"{rt}/hypr/{sig}/.socket2.sock"
+    events = ("openwindow", "closewindow", "fullscreen", "movewindow", "windowtitle")
+    while True:
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.connect(path)
+            s.settimeout(1.5)
+            pending = evaluate()
+            buf = b""
+            while True:
+                try:
+                    data = s.recv(4096)
+                    if not data:
+                        break
+                    buf += data
+                    *lines, buf = buf.split(b"\n")
+                    if any(l.split(b">>")[0].decode(errors="ignore") in events for l in lines):
+                        pending = True
+                except socket.timeout:
+                    if pending:
+                        pending = evaluate()
+        except OSError as e:
+            if not os.path.exists(path):          # сеанс Hyprland, для якого нас запустили, вже закрився
+                log("watch: сеанс Hyprland завершився — виходжу")
+                return
+            log(f"watch: {e}; повтор через 3 с")
+            time.sleep(3)
+
+
+def main():
+    a = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if a == "on":
+        on(manual=True)
+    elif a == "off":
+        off()
+    elif a == "toggle":
+        off() if load().get("active") else on(manual=True)
+    elif a == "watch":
+        watch()
+    elif a == "dropcache":
+        print(drop_ollama_cache() // (1024 * 1024), "МБ")
+    elif a == "check":
+        print(games())
+    else:
+        print("on" if load().get("active") else "off")
+
+
+if __name__ == "__main__":
+    main()

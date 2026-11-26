@@ -1,0 +1,28 @@
+{
+  "hypr": {
+    "input:repeat_rate": 25,
+    "misc:mouse_move_enables_dpms": false,
+    "misc:key_press_enables_dpms": true,
+    "misc:vrr": 0,
+    "decoration:dim_inactive": false,
+    "cursor:inactive_timeout": 0.0,
+    "input:accel_profile": "flat",
+    "input:sensitivity": 0.45,
+    "input:numlock_by_default": true,
+    "general:resize_on_border": true
+  },
+  "idle.suspend": 1800,
+  "night.enabled": true,
+  "night.from": "22:00",
+  "night.to": "07:00",
+  "night.schedule": true,
+  "idle.lock": 0,
+  "idle.dpms": 900,
+  "idle.dim": 600,
+  "night.temp": 5200,
+  "power.low_battery": 50,
+  "power.on_battery": "balanced",
+  "power.on_ac": "performance",
+  "cursor.theme": "Minimal",
+  "cursor.size": 24
+}

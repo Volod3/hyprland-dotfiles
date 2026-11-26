@@ -1,0 +1,1005 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""qsettings-ctl — бекенд Quickshell-застосунку налаштувань Hyprland.
+
+Підкоманди (усі друкують один рядок JSON у stdout):
+  opts                     поточні значення опцій оформлення + defaults + overrides
+  set <key> <value>        застосувати одну опцію, перевірити getoption, зберегти
+  apply '<json-map>'       застосувати набір опцій (кнопка «Застосувати»)
+  reset                    повернути типові значення теми (кнопка «Скинути до теми»)
+  restore                  повернути значення з overrides.json
+  binds                    розібрати ~/.config/hypr/hyprland.lua -> cache/binds.json
+  state                    тема, ігровий режим, шпалери
+  sysinfo                  залізо + версії
+  theme apply <1|2>|toggle|current
+  game toggle|status
+  wallpaper                theme-switch apply <current>
+  shot                     spectacle -f -b -n -o /tmp/...
+
+Hyprland 0.57 з Lua-конфігом: `hyprctl keyword` майже завжди відповідає
+«unknown request», тому кожна опція ставиться через
+`hyprctl eval 'hl.config({...})'` і потім звіряється з `hyprctl getoption`.
+Файл hyprland.lua лише читається — жодних записів.
+"""
+import ast
+import glob
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+APP = Path(__file__).resolve().parent.parent
+CACHE = APP / "cache"
+DEFAULTS_FILE = APP / "defaults.json"
+OVERRIDES_FILE = APP / "overrides.json"
+BASE = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "theme-switch"
+LOG_FILE = BASE / "logs" / "hypr-settings.log"
+HYPR_LUA = Path.home() / ".config" / "hypr" / "hyprland.lua"
+
+OPTS = [
+    "general:gaps_in", "general:gaps_out", "general:border_size",
+    "decoration:rounding", "decoration:active_opacity", "decoration:inactive_opacity",
+    "decoration:blur:enabled", "decoration:blur:size", "decoration:blur:passes",
+    "decoration:blur:vibrancy", "animations:enabled",
+]
+
+TZ = timezone(timedelta(hours=2))  # EET
+
+
+# ---------------------------------------------------------------- helpers ----
+def log(msg):
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with LOG_FILE.open("a", encoding="utf-8") as fh:
+            fh.write("%s [ctl:%s] %s\n" % (
+                datetime.now().strftime("%F %T"), os.getpid(), msg))
+    except Exception:
+        pass
+
+
+def emit(obj, code=0):
+    print(json.dumps(obj, ensure_ascii=False))
+    sys.exit(code)
+
+
+def now_iso():
+    return datetime.now(TZ).isoformat(timespec="seconds")
+
+
+def load_json(path, fallback):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return fallback
+
+
+def write_json(path, obj):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+# ------------------------------------------------------------------- env -----
+def detect_env():
+    rt = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    os.environ["XDG_RUNTIME_DIR"] = rt
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        for cand in sorted(glob.glob(rt + "/wayland-*")):
+            if cand.endswith(".lock"):
+                continue
+            if os.path.exists(cand):
+                os.environ["WAYLAND_DISPLAY"] = os.path.basename(cand)
+                break
+    sigs = []
+    env_sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if env_sig:
+        sigs.append(env_sig)
+    for d in sorted(glob.glob(rt + "/hypr/*/")):
+        s = os.path.basename(d.rstrip("/"))
+        if s not in sigs:
+            sigs.append(s)
+    for sig in sigs:
+        if not (Path(rt) / "hypr" / sig / ".socket.sock").exists():
+            continue
+        env = dict(os.environ, HYPRLAND_INSTANCE_SIGNATURE=sig)
+        try:
+            p = subprocess.run(["hyprctl", "monitors", "-j"], env=env,
+                               capture_output=True, text=True, timeout=8)
+        except Exception:
+            continue
+        if p.returncode == 0 and p.stdout.strip().startswith("["):
+            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = sig
+            return sig
+    return os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+
+
+def hyprctl(*args, timeout=10):
+    try:
+        return subprocess.run(["hyprctl", *args], capture_output=True,
+                              text=True, timeout=timeout)
+    except Exception as exc:
+        log("hyprctl %s failed: %s" % (" ".join(args[:2]), exc))
+        return None
+
+
+NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def parse_option(text):
+    """Розбирає вивід `hyprctl getoption` у типізоване значення."""
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("css gap data:"):
+            m = NUM_RE.search(line.split(":", 1)[1])
+            return int(float(m.group())) if m else None
+        m = re.match(r"^(int|float|bool|str|color|vec2):\s*(.*)$", line)
+        if not m:
+            continue
+        kind, val = m.group(1), m.group(2).strip()
+        if kind == "int":
+            try:
+                return int(val)
+            except ValueError:
+                return None
+        if kind == "float":
+            try:
+                return float(val)
+            except ValueError:
+                return None
+        if kind == "bool":
+            return val == "true"
+        return val
+    return None
+
+
+def get_option(name):
+    p = hyprctl("getoption", name)
+    if p is None or p.returncode != 0:
+        return None
+    return parse_option(p.stdout)
+
+
+def lua_literal(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return '"%s"' % str(value).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def lua_config(path, value):
+    parts = path.split(":")
+    # найглибша таблиця: { leaf = value }, далі обгортаємо батьками
+    lua = "{ %s = %s }" % (parts[-1], lua_literal(value))
+    for seg in reversed(parts[:-1]):
+        lua = "{ %s = %s }" % (seg, lua)
+    return "hl.config(%s)" % lua
+
+
+def same(a, b):
+    if isinstance(a, bool) or isinstance(b, bool):
+        return bool(a) == bool(b)
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) < 0.005
+    return str(a) == str(b)
+
+
+def apply_one(key, value):
+    lua = lua_config(key, value)
+    p = hyprctl("eval", lua)
+    ok = p is not None and "ok" in (p.stdout or "")
+    got = get_option(key)
+    verified = got is not None and same(got, value)
+    res = {"ok": ok, "key": key, "value": value, "got": got,
+           "verified": verified, "lua": lua}
+    log("apply %s=%s -> ok=%s got=%s verified=%s"
+        % (key, value, ok, got, verified))
+    return res
+
+
+def save_overrides(values):
+    data = {"updated_at": now_iso(),
+            "hyprland_sig": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", ""),
+            "values": {k: v for k, v in values.items() if k in OPTS}}
+    write_json(OVERRIDES_FILE, data)
+    # щоб зміни «Оформлення» пережили перезапуск — оновити user-settings.lua (його підключає hyprland.lua)
+    try:
+        subprocess.run([str(Path(__file__).resolve().parent / "usettings"), "regen"], timeout=10)
+    except Exception as exc:
+        log("regen failed: %s" % exc)
+    return data
+
+
+def coerce(raw, template):
+    if isinstance(template, bool):
+        return str(raw).strip().lower() in ("1", "true", "on", "yes")
+    if isinstance(template, int):
+        return int(round(float(raw)))
+    if isinstance(template, float):
+        return float(raw)
+    return raw
+
+
+# ---------------------------------------------------------------- options ----
+def cmd_opts():
+    values = {}
+    for name in OPTS:
+        values[name] = get_option(name)
+    defaults = load_json(DEFAULTS_FILE, {})
+    over = load_json(OVERRIDES_FILE, {}).get("values", {})
+    emit({"ok": True, "values": values, "defaults": defaults,
+          "overrides": over, "updated": now_iso()})
+
+
+def cmd_set(key, raw):
+    if key not in OPTS:
+        emit({"ok": False, "error": "unknown option: %s" % key}, 2)
+    defaults = load_json(DEFAULTS_FILE, {})
+    value = coerce(raw, defaults.get(key))
+    res = apply_one(key, value)
+    if res["verified"] or res["got"] is not None:
+        cur = load_json(OVERRIDES_FILE, {}).get("values", {})
+        cur[key] = res["got"] if res["got"] is not None else value
+        save_overrides(cur)
+    emit(res)
+
+
+def cmd_apply(map_json):
+    try:
+        wanted = json.loads(map_json)
+    except Exception as exc:
+        emit({"ok": False, "error": "bad json: %s" % exc}, 2)
+    defaults = load_json(DEFAULTS_FILE, {})
+    results = []
+    applied = load_json(OVERRIDES_FILE, {}).get("values", {})
+    for key, raw in wanted.items():
+        if key not in OPTS:
+            continue
+        value = coerce(raw, defaults.get(key))
+        res = apply_one(key, value)
+        results.append(res)
+        if res["got"] is not None:
+            applied[key] = res["got"]
+    save_overrides(applied)
+    emit({"ok": all(r["verified"] for r in results), "results": results,
+          "values": {r["key"]: r["got"] for r in results}})
+
+
+def cmd_reset():
+    defaults = load_json(DEFAULTS_FILE, {})
+    if not defaults:
+        emit({"ok": False, "error": "defaults.json відсутній"}, 2)
+    results = []
+    applied = {}
+    for key in OPTS:
+        if key not in defaults:
+            continue
+        res = apply_one(key, defaults[key])
+        results.append(res)
+        applied[key] = res["got"] if res["got"] is not None else defaults[key]
+    save_overrides(applied)
+    emit({"ok": all(r["verified"] for r in results), "results": results,
+          "values": applied})
+
+
+def cmd_restore():
+    saved = load_json(OVERRIDES_FILE, {})
+    values = saved.get("values", {})
+    if not values:
+        emit({"ok": False, "error": "overrides.json порожній"}, 2)
+    results = []
+    for key, value in values.items():
+        if key in OPTS:
+            results.append(apply_one(key, value))
+    emit({"ok": all(r["verified"] for r in results), "results": results,
+          "values": {r["key"]: r["got"] for r in results},
+          "saved_at": saved.get("updated_at")})
+
+
+# ------------------------------------------------------------- lua parser ----
+def strip_comment(line):
+    out, quote, i = [], None, 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and i + 1 < len(line):
+                out.append(line[i + 1])
+                i += 1
+            elif ch == quote:
+                quote = None
+        else:
+            if ch in "\"'":
+                quote = ch
+                out.append(ch)
+            elif line.startswith("--", i):
+                break
+            else:
+                out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def split_top(expr, sep):
+    """Ділить вираз на top-level роздільнику (поза рядками/дужками)."""
+    parts, buf, depth, quote, i = [], "", 0, None, 0
+    while i < len(expr):
+        ch = expr[i]
+        if quote:
+            buf += ch
+            if ch == "\\" and i + 1 < len(expr):
+                buf += expr[i + 1]
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+            buf += ch
+        elif ch in "({[":
+            depth += 1
+            buf += ch
+        elif ch in ")}]":
+            depth -= 1
+            buf += ch
+        elif depth == 0 and expr.startswith(sep, i):
+            parts.append(buf.strip())
+            buf = ""
+            i += len(sep) - 1
+        else:
+            buf += ch
+        i += 1
+    parts.append(buf.strip())
+    return parts
+
+
+def eval_atom(atom, aliases, varz):
+    atom = atom.strip()
+    if not atom:
+        return ""
+    if atom[0] in "\"'":
+        try:
+            val = ast.literal_eval(atom)
+            return "" if val is None else val
+        except Exception:
+            return atom.strip("\"'")
+    if atom in aliases:
+        return aliases[atom]
+    if atom in varz:
+        return varz[atom]
+    try:
+        return eval(atom, {"__builtins__": {}}, {**aliases, **varz})  # noqa: S307
+    except Exception:
+        return atom
+
+
+def eval_expr(expr, aliases, varz):
+    parts = split_top(expr.strip(), "..")
+    if len(parts) == 1:
+        return eval_atom(parts[0], aliases, varz)
+    return "".join(str(eval_atom(p, aliases, varz)) for p in parts)
+
+
+def split_call(expr):
+    """'exec_cmd(foo)' -> ('exec_cmd', 'foo')"""
+    idx = expr.find("(")
+    if idx < 0:
+        return expr.strip(), ""
+    return expr[:idx].strip(), expr[idx + 1:].rstrip().rstrip(")").strip()
+
+
+def parse_lua_table(text, aliases, varz):
+    table = {}
+    for m in re.finditer(
+            r'([A-Za-z_]\w*)\s*=\s*("(?:[^"\\]|\\.)*"|true|false|-?\d+(?:\.\d+)?|[\w\.\-]+)',
+            text):
+        key, raw = m.group(1), m.group(2)
+        if raw.startswith('"'):
+            try:
+                table[key] = ast.literal_eval(raw)
+            except Exception:
+                table[key] = raw.strip('"')
+        elif raw in ("true", "false"):
+            table[key] = raw == "true"
+        elif re.fullmatch(r"-?\d+", raw):
+            table[key] = int(raw)
+        elif re.fullmatch(r"-?\d+\.\d+", raw):
+            table[key] = float(raw)
+        else:
+            table[key] = eval_atom(raw, aliases, varz)
+    return table
+
+
+DIRS = {"left": "ліворуч", "right": "праворуч", "up": "вгору", "down": "вниз"}
+
+KEY_LABELS = {
+    "left": "←", "right": "→", "up": "↑", "down": "↓",
+    "mouse_down": "Колесо ↓", "mouse_up": "Колесо ↑",
+    "mouse:272": "ЛКМ", "mouse:273": "ПКМ",
+    "Print": "Print Screen", "Pause": "Pause/Break",
+    "XF86AudioRaiseVolume": "Гучність +", "XF86AudioLowerVolume": "Гучність −",
+    "XF86AudioMute": "Без звуку", "XF86AudioMicMute": "Мікрофон off",
+    "XF86MonBrightnessUp": "Яскравість +", "XF86MonBrightnessDown": "Яскравість −",
+    "XF86AudioNext": "Наступний", "XF86AudioPrev": "Попередній",
+    "XF86AudioPause": "Пауза", "XF86AudioPlay": "Play/Pause",
+}
+
+CMD_RULES = [
+    (r"spectacle\s+-f", "Скріншот усього екрана", "shots"),
+    (r"spectacle\s+-r", "Скріншот вибраної області", "shots"),
+    (r"spectacle", "Скріншот (spectacle)", "shots"),
+    (r"hyprshot\s+-m\s+region", "Скріншот ділянки екрана", "shots"),
+    (r"hyprshot\s+-m\s+output", "Скріншот усього екрана", "shots"),
+    (r"wofi\s+--show\s+drun", "Меню запуску застосунків (wofi)", "apps"),
+    (r"^wofi$", "Меню wofi", "apps"),
+    (r"pavucontrol", "Керування звуком (pavucontrol)", "apps"),
+    (r"google-chrome", "Браузер Google Chrome", "apps"),
+    (r"flatpak run com\.ktechpit\.whatsie", "WhatsApp (Whatsie)", "apps"),
+    (r"^Telegram$", "Telegram", "apps"),
+    (r"dolphin", "Файловий менеджер Dolphin", "apps"),
+    (r"^kitty$", "Термінал kitty", "apps"),
+    (r"hyprshutdown", "Вихід із сесії Hyprland", "apps"),
+    (r"wpctl\s+set-volume\s+-l\s+1.*5%\+", "Гучність +5%", "media"),
+    (r"wpctl\s+set-volume.*5%-", "Гучність −5%", "media"),
+    (r"set-mute\s+@DEFAULT_AUDIO_SINK@", "Звук: вимкнути / увімкнути", "media"),
+    (r"set-mute\s+@DEFAULT_AUDIO_SOURCE@", "Мікрофон: вимкнути / увімкнути", "media"),
+    (r"brightnessctl.*5%\+", "Яскравість +5%", "media"),
+    (r"brightnessctl.*5%-", "Яскравість −5%", "media"),
+    (r"playerctl\s+next", "Наступний трек", "media"),
+    (r"playerctl\s+previous", "Попередній трек", "media"),
+    (r"playerctl\s+play-pause", "Пауза / відтворення", "media"),
+]
+
+# скрипти theme-switch: шлях довгий, тому шукаємо за іменем файлу
+SCRIPT_RULES = [
+    ("theme-menu", "Меню вибору теми", "theme"),
+    ("game-mode", "Ігровий режим: увімкнути / вимкнути", "theme"),
+    ("hypr-settings", "Налаштування Hyprland", "theme"),
+    ("launcher", "Меню запуску застосунків", "apps"),
+    ("cc", "Центр керування (звук, яскравість)", "apps"),
+]
+
+GROUP_ORDER = [
+    ("apps", "Застосунки"),
+    ("windows", "Вікна"),
+    ("workspaces", "Робочі столи"),
+    ("focus", "Навігація"),
+    ("theme", "Теми та режими"),
+    ("media", "Медіа та яскравість"),
+    ("shots", "Скріншоти"),
+    ("mouse", "Миша"),
+]
+
+
+def describe_cmd(cmd):
+    c = cmd.strip()
+    if re.search(r"theme-switch\s+toggle", c):
+        return "Перемкнути тему (Мадара ⇄ Азур)", "theme"
+    if re.search(r"(^|/)theme-switch(\s|$)", c):
+        return "Застосувати поточну тему", "theme"
+    for name, label, group in SCRIPT_RULES:
+        if re.search(r"(^|/)" + re.escape(name) + r"(\s|$)", c):
+            return label, group
+    for pattern, label, group in CMD_RULES:
+        if re.search(pattern, c):
+            return label, group
+    short = c if len(c) <= 46 else c[:43] + "…"
+    return "Команда: " + short, "apps"
+
+
+def describe_action(expr, aliases, varz):
+    expr = expr.strip()
+    if not expr.startswith("hl.dsp."):
+        return "Невідома дія", "apps", expr
+    name, arg_src = split_call(expr[len("hl.dsp."):])
+    arg = arg_src
+    if arg_src.startswith("{"):
+        arg = parse_lua_table(arg_src, aliases, varz)
+    elif arg_src:
+        arg = eval_expr(arg_src, aliases, varz)
+
+    if name == "exec_cmd":
+        label, group = describe_cmd(str(arg))
+        return label, group, {"exec": str(arg)}
+    if name == "window.close":
+        return "Закрити активне вікно", "windows", {}
+    if name == "window.float":
+        return "Плаваюче вікно: увімкнути / вимкнути", "windows", {}
+    if name == "window.pseudo":
+        return "Псевдотайлінг: увімкнути / вимкнути", "windows", {}
+    if name == "window.fullscreen":
+        return "Повноекранний режим", "windows", {}
+    if name == "window.drag":
+        return "Перетягнути вікно", "mouse", {}
+    if name == "window.resize":
+        if isinstance(arg, dict) and arg.get("relative"):
+            dx, dy = arg.get("x", 0), arg.get("y", 0)
+            if dx:
+                return ("Ширина вікна %+d px" % dx), "windows", {}
+            if dy:
+                return ("Висота вікна %+d px" % dy), "windows", {}
+        return "Змінити розмір вікна", "mouse", {}
+    if name == "window.move" and isinstance(arg, dict):
+        ws = arg.get("workspace")
+        if isinstance(ws, str) and ws.startswith("special:"):
+            return "Вікно → прихований стіл «%s»" % ws.split(":", 1)[1], "workspaces", {}
+        return "Вікно → робочий стіл %s" % ws, "workspaces", {}
+    if name == "workspace.toggle_special":
+        return "Показати / сховати стіл «%s»" % arg, "workspaces", {}
+    if name == "focus":
+        if isinstance(arg, dict):
+            if "direction" in arg:
+                d = str(arg["direction"])
+                return "Фокус %s" % DIRS.get(d, d), "focus", {}
+            ws = str(arg.get("workspace", ""))
+            if ws == "e+1":
+                return "Наступний робочий стіл (колесо ↓)", "workspaces", {}
+            if ws == "e-1":
+                return "Попередній робочий стіл (колесо ↑)", "workspaces", {}
+            return "Перейти на робочий стіл %s" % ws, "workspaces", {}
+    if name == "layout":
+        return "Dwindle: розділити / об'єднати", "windows", {}
+    return "Дія: %s" % name, "apps", {}
+
+
+def pretty_combo(combo):
+    parts = [p.strip() for p in combo.split("+")]
+    out = []
+    for part in parts:
+        out.append(KEY_LABELS.get(part, part))
+    return " + ".join(out)
+
+
+def find_bind_calls(lines):
+    """Повертає список (line_no, text) для кожного hl.bind(...)."""
+    calls, i = [], 0
+    while i < len(lines):
+        line = strip_comment(lines[i])
+        if "hl.bind(" not in line:
+            i += 1
+            continue
+        start = i
+        text = line.strip()
+        while text.count("(") > text.count(")") and i + 1 < len(lines):
+            i += 1
+            text += " " + strip_comment(lines[i]).strip()
+        calls.append((start + 1, text))
+        i += 1
+    return calls
+
+
+def collect_aliases(lines):
+    aliases = {}
+    for raw in lines:
+        line = strip_comment(raw)
+        m = re.match(r'^\s*local\s+([A-Za-z_]\w*)\s*=\s*("(?:[^"\\]|\\.)*")\s*$', line)
+        if m:
+            try:
+                aliases[m.group(1)] = ast.literal_eval(m.group(2))
+            except Exception:
+                pass
+    return aliases
+
+
+def expand_loops(lines):
+    """Розгортає `for i = 1, 10 do ... end` у (line, vars) пари."""
+    out = []
+    stack = [({}, False)]
+    loop = None
+    for idx, raw in enumerate(lines):
+        line = strip_comment(raw)
+        stripped = line.strip()
+        m = re.match(r'^for\s+([A-Za-z_]\w*)\s*=\s*(-?\d+)\s*,\s*(-?\d+)\s*(?:,\s*(-?\d+))?\s+do\b', stripped)
+        if m and loop is None:
+            loop = {"var": m.group(1), "from": int(m.group(2)),
+                    "to": int(m.group(3)), "step": int(m.group(4) or 1),
+                    "body": []}
+            continue
+        if loop is not None:
+            if re.match(r"^end\b", stripped):
+                for value in range(loop["from"], loop["to"] + 1, loop["step"]):
+                    varz = {loop["var"]: value}
+                    out.extend([(ln, txt, varz) for ln, txt in loop["body"]])
+                loop = None
+            else:
+                loop["body"].append((idx + 1, raw))
+            continue
+        out.append((idx + 1, raw, {}))
+    return out
+
+
+def cmd_binds():
+    if not HYPR_LUA.exists():
+        emit({"ok": False, "error": "немає %s" % HYPR_LUA}, 2)
+    lines = HYPR_LUA.read_text(encoding="utf-8", errors="replace").splitlines()
+    aliases = collect_aliases(lines)
+    expanded = expand_loops(lines)
+
+    items = []
+    prev_varz = None
+    local_vars = {}
+    for lineno, text, varz in expanded:
+        clean = strip_comment(text)
+        if varz != prev_varz:
+            local_vars = dict(varz)
+            prev_varz = varz
+        # локальні змінні всередині циклу: local key = i % 10
+        mm = re.match(r'^\s*local\s+([A-Za-z_]\w*)\s*=\s*(.+)$', clean)
+        if mm and "hl.bind(" not in clean:
+            name, src = mm.group(1), mm.group(2).strip()
+            if src.startswith('"'):
+                try:
+                    local_vars[name] = ast.literal_eval(src)
+                except Exception:
+                    pass
+            elif any(ch.isdigit() or ch in "i%-+* " for ch in src):
+                try:
+                    local_vars[name] = eval(src, {"__builtins__": {}},
+                                            {**aliases, **local_vars})  # noqa: S307
+                except Exception:
+                    pass
+            continue
+        if "hl.bind(" not in clean:
+            continue
+        body = clean[clean.find("hl.bind(") + len("hl.bind("):]
+        body = body.rsplit(")", 1)[0]
+        args = split_top(body, ",")
+        if len(args) < 2:
+            continue
+        scope = {**local_vars, **varz}
+        combo = pretty_combo(str(eval_expr(args[0], aliases, scope)))
+        action, group, detail = describe_action(args[1], aliases, scope)
+        opts = args[2] if len(args) > 2 else ""
+        if "long_press" in opts:
+            action += " · довге натискання"
+        items.append({
+            "combo": combo, "action": action, "group": group,
+            "detail": detail, "mouse": "mouse" in opts,
+            "line": lineno,
+        })
+
+    groups = {}
+    for item in items:
+        groups.setdefault(item["group"], []).append(item)
+    ordered = []
+    for gid, label in GROUP_ORDER:
+        if gid in groups:
+            ordered.append({"id": gid, "name": label, "items": groups.pop(gid)})
+    for gid, rest in groups.items():
+        ordered.append({"id": gid, "name": gid, "items": rest})
+
+    payload = {
+        "ok": True,
+        "source": str(HYPR_LUA),
+        "generated_at": now_iso(),
+        "count": len(items),
+        "groups": ordered,
+        "items": items,
+    }
+    write_json(CACHE / "binds.json", payload)
+    emit(payload)
+
+
+# ------------------------------------------------------------------ state ----
+def theme_info(theme_id):
+    label, accent, icon = theme_id, "#7fdcff", ""
+    conf = BASE / "themes"
+    for d in sorted(conf.glob("*/theme.conf")):
+        txt = d.read_text(encoding="utf-8", errors="replace")
+        mid = re.search(r'^ID="?([^"\n]+)"?', txt, re.M)
+        if mid and mid.group(1).strip() == theme_id:
+            ml = re.search(r'^LABEL="?([^"\n]+)"?', txt, re.M)
+            ma = re.search(r'^MENU_ACCENT="?([^"\n]+)"?', txt, re.M)
+            mi = re.search(r'^ICON="?([^"\n]+)"?', txt, re.M)
+            label = ml.group(1).strip() if ml else theme_id
+            accent = ma.group(1).strip() if ma else accent
+            icon = mi.group(1).strip() if mi else ""
+            break
+    return {"id": theme_id, "label": label, "accent": accent, "icon": icon}
+
+
+# ігровий режим тепер — ~/.config/wallpapers_QS/tools/gamemode (старий theme-switch/bin/game-mode
+# вбивав усі процеси Quickshell, тобто й бокову панель, пета, вікна waybar)
+GAMEMODE = Path.home() / ".config/wallpapers_QS/tools/gamemode"
+GAME_STATE = Path.home() / ".cache/gamemode.json"
+
+
+def game_active():
+    try:
+        return json.loads(GAME_STATE.read_text()).get("active") is True
+    except Exception:
+        return False
+
+
+def themes_list():
+    out = []
+    for d in sorted((BASE / "themes").glob("*/theme.conf")):
+        txt = d.read_text(encoding="utf-8", errors="replace")
+        info = {"id": "", "label": d.parent.name, "accent": "#7fdcff", "icon": ""}
+        for key, field in (("ID", "id"), ("LABEL", "label"),
+                           ("MENU_ACCENT", "accent"), ("ICON", "icon")):
+            m = re.search(r'^%s="?([^"\n]+)"?' % key, txt, re.M)
+            if m:
+                info[field] = m.group(1).strip()
+        if info["id"]:
+            out.append(info)
+    return out
+
+
+def current_theme():
+    # старі теми theme-switch (Мадара/Азур) більше не використовуються — одна тема «небо й хмари»
+    return "sky"
+
+
+def cmd_state():
+    tid = current_theme()
+    info = theme_info(tid)
+    wallpaper = ""
+    for conf in (BASE / "themes").glob("*/theme.conf"):
+        txt = conf.read_text(encoding="utf-8", errors="replace")
+        mid = re.search(r'^ID="?([^"\n]+)"?', txt, re.M)
+        if mid and mid.group(1).strip() == tid:
+            m = re.search(r'^QS_DIR="?([^"\n]+)"?', txt, re.M)
+            if m:
+                wallpaper = os.path.basename(m.group(1).strip())
+            break
+    emit({
+        "ok": True,
+        "theme": info,
+        "themes": themes_list(),
+        "game_on": game_active(),
+        "game_state_file": str(GAME_STATE),
+        "wallpaper": wallpaper,
+        "updated": now_iso(),
+    })
+
+
+def cmd_sysinfo():
+    def read(path):
+        try:
+            return Path(path).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    model = " ".join(x for x in [
+        read("/sys/devices/virtual/dmi/id/sys_vendor").strip(),
+        read("/sys/devices/virtual/dmi/id/product_name").strip()] if x) or "невідомо"
+
+    cpu = "невідомо"
+    for line in read("/proc/cpuinfo").splitlines():
+        if line.lower().startswith("model name"):
+            cpu = line.split(":", 1)[1].strip()
+            break
+    cores = sum(1 for l in read("/proc/cpuinfo").splitlines()
+                if l.startswith("processor"))
+
+    gpus = []
+    if shutil.which("lspci"):
+        try:
+            out = subprocess.run(["lspci"], capture_output=True, text=True,
+                                 timeout=8).stdout
+            for line in out.splitlines():
+                if re.search(r"VGA compatible|3D controller|Display controller", line):
+                    g = line.split(": ", 1)[-1]
+                    g = re.sub(r"\[[0-9a-f]{4}\]\s*", "", g)
+                    gpus.append(g.strip())
+        except Exception:
+            pass
+    if not gpus:
+        gpus = ["невідомо"]
+
+    mem_total = mem_avail = 0
+    for line in read("/proc/meminfo").splitlines():
+        if line.startswith("MemTotal:"):
+            mem_total = int(line.split()[1])
+        elif line.startswith("MemAvailable:"):
+            mem_avail = int(line.split()[1])
+    gib = 1024 * 1024
+
+    hypr = ""
+    p = hyprctl("version")
+    if p and p.stdout:
+        first = p.stdout.splitlines()[0]
+        m = re.match(r"(Hyprland\s+[\d.]+)", first)
+        hypr = m.group(1) if m else first.strip()
+    if not hypr:
+        hypr = "Hyprland (немає IPC)"
+
+    monitors = []
+    p = hyprctl("monitors", "-j")
+    if p and p.stdout:
+        try:
+            for m in json.loads(p.stdout):
+                monitors.append("%s %dx%d@%.0f" % (m.get("name"), m.get("width"),
+                                                   m.get("height"),
+                                                   float(m.get("refreshRate", 0))))
+        except Exception:
+            pass
+
+    emit({
+        "ok": True,
+        "model": model,
+        "cpu": cpu,
+        "cores": cores,
+        "gpu": " · ".join(gpus),
+        "ram_total_gib": round(mem_total / gib, 1),
+        "ram_used_gib": round((mem_total - mem_avail) / gib, 1),
+        "ram_percent": int(round((mem_total - mem_avail) * 100 / mem_total)) if mem_total else 0,
+        "hyprland": hypr,
+        "kernel": os.uname().release,
+        "monitors": monitors,
+        "session": os.environ.get("XDG_CURRENT_DESKTOP", "Hyprland"),
+        "updated": now_iso(),
+    })
+
+
+# ------------------------------------------------------------ actions --------
+def run_script(cmd, timeout=90):
+    env = os.environ.copy()
+    log("run: %s" % " ".join(cmd))
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           env=env)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except Exception as exc:
+        return 1, str(exc)
+
+
+def theme_info(theme_id):  # noqa: F811 — перекриває стару версію
+    return {"id": "sky", "label": "Небо й хмари · синя", "accent": "#6fa8ff", "icon": ""}
+
+
+def themes_list():  # noqa: F811
+    return [theme_info("sky")]
+
+
+def cmd_theme(arg):
+    # перемикання старих тем вимкнено: theme-switch переписував конфіги під інші шпалери
+    emit({"ok": False, "error": "Перемикання тем вимкнено — тема одна («Небо й хмари»). "
+                                 "Кольори: ~/.config/waybar/style.css, bg_sidepanel/sidepanel.json"}, 0)
+    script = str(BASE / "bin" / "theme-switch")
+    if arg == "current":
+        emit({"ok": True, "theme": theme_info(current_theme())})
+    if arg == "toggle":
+        cmd = [script, "toggle"]
+    elif arg in ("1", "2", "madara", "azure"):
+        cmd = [script, "apply", arg]
+    else:
+        emit({"ok": False, "error": "usage: theme apply 1|2 | theme toggle"}, 2)
+    rc, out = run_script(cmd, timeout=120)
+    emit({"ok": rc == 0, "rc": rc, "output": out.strip()[-800:],
+          "theme": theme_info(current_theme())})
+
+
+def cmd_game(arg):
+    script = str(GAMEMODE)
+    if arg == "status":
+        emit({"ok": True, "game_on": game_active()})
+    rc, out = run_script([script, "toggle"], timeout=90)
+    emit({"ok": rc == 0, "rc": rc, "game_on": game_active(),
+          "output": out.strip()[-600:]})
+
+
+def cmd_wallpaper():
+    """Перезапустити паралакс-шпалери (Quickshell)."""
+    shell = str(Path.home() / ".config/wallpapers_QS/bg_parallax_MDRG/shell.qml")
+    subprocess.run(["pkill", "-f", "^qs -p " + re.escape(shell) + "$"], capture_output=True)
+    time.sleep(0.5)
+    subprocess.Popen(["setsid", "-f", "qs", "-p", shell], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    emit({"ok": True, "rc": 0, "output": "Шпалери перезапущено", "theme": theme_info(current_theme())})
+
+
+def focused_output():
+    p = hyprctl("monitors", "-j")
+    if p and p.stdout:
+        try:
+            for m in json.loads(p.stdout):
+                if m.get("focused"):
+                    return m.get("name")
+        except Exception:
+            pass
+    return None
+
+
+def grim_shot(path):
+    if not shutil.which("grim"):
+        return False
+    out = focused_output()
+    cmd = ["grim"] + (["-o", out] if out else []) + [path]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        log("grim %s -> rc=%s %s" % (path, r.returncode, (r.stderr or "").strip()))
+        return r.returncode == 0 and os.path.exists(path)
+    except Exception as exc:
+        log("grim failed: %s" % exc)
+        return False
+
+
+def cmd_shot():
+    """spectacle у фоні; якщо він не віддав файл — той самий шлях через grim."""
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = "/tmp/hypr-settings-%s.png" % ts
+    if os.path.exists(path):
+        os.unlink(path)
+    method = None
+    proc = None
+    if shutil.which("spectacle"):
+        try:
+            proc = subprocess.Popen(["spectacle", "-f", "-b", "-n", "-o", path],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    start_new_session=True)
+        except Exception as exc:
+            log("spectacle launch failed: %s" % exc)
+            proc = None
+        deadline = time.time() + 6
+        while time.time() < deadline:
+            if os.path.exists(path) and os.path.getsize(path) > 1024:
+                method = "spectacle"
+                break
+            if proc.poll() is not None:
+                break
+            time.sleep(0.25)
+        if method is None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    if method is None and grim_shot(path):
+        method = "grim"
+
+    ok = method is not None and os.path.exists(path) and os.path.getsize(path) > 1024
+    write_json(CACHE / "last-shot.json", {"path": path, "ok": ok, "method": method,
+                                          "at": now_iso()})
+    emit({"ok": ok, "path": path if ok else "", "method": method,
+          "error": None if ok else "ні spectacle, ні grim не віддали файл"})
+
+
+# ------------------------------------------------------------------- main ----
+def main(argv):
+    detect_env()
+    cmd = argv[1] if len(argv) > 1 else "opts"
+    args = argv[2:]
+    if cmd == "opts":
+        cmd_opts()
+    elif cmd == "set":
+        if len(args) < 2:
+            emit({"ok": False, "error": "usage: set <key> <value>"}, 2)
+        cmd_set(args[0], args[1])
+    elif cmd == "apply":
+        cmd_apply(args[0] if args else "{}")
+    elif cmd == "reset":
+        cmd_reset()
+    elif cmd == "restore":
+        cmd_restore()
+    elif cmd == "binds":
+        cmd_binds()
+    elif cmd == "state":
+        cmd_state()
+    elif cmd == "sysinfo":
+        cmd_sysinfo()
+    elif cmd == "theme":
+        cmd_theme(args[0] if args else "current")
+    elif cmd == "game":
+        cmd_game(args[0] if args else "status")
+    elif cmd == "wallpaper":
+        cmd_wallpaper()
+    elif cmd == "shot":
+        cmd_shot()
+    else:
+        emit({"ok": False, "error": "unknown command: %s" % cmd}, 2)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

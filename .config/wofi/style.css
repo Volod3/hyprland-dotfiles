@@ -1,0 +1,88 @@
+/* ╔══════════════════════════════════════════════════════════════╗
+   ║  wofi — тема «небо й хмари», у тон до waybar і swaync         ║
+   ║  (меню додатків, меню живлення, powerprofile.sh)              ║
+   ╚══════════════════════════════════════════════════════════════╝ */
+
+/* ════════ ТЕМА ════════ */
+@define-color accent  #e8a9c4;               /* рожеві хмари — той самий, що в waybar і swaync */
+@define-color surface alpha(#0f2a4d, 0.28);  /* фон вікна — легка синя вуаль (менше число = прозоріше) */
+@define-color field   alpha(#0f2a4d, 0.35);  /* поле пошуку */
+@define-color text    #ece0ec;               /* молочно-рожевий */
+@define-color subtext #b9b3cc;
+@define-color onAccent #13213d;              /* темно-синій текст на рожевому */
+@define-color border  alpha(@accent, 0.95);  /* межа — як лінії на waybar */
+
+* {
+  font-family: "JetBrainsMono Nerd Font", JetBrainsMonoNerdFont, sans-serif;   /* щоб іконки в меню живлення не були квадратиками */
+  font-weight: 700;
+}
+
+window {
+  margin: 0px;
+  border: 2px solid @border;          /* 2px — як на бульбашках waybar */
+  background-color: @surface;
+  border-radius: 16px;
+}
+
+#outer-box {
+  margin: 8px;
+  background-color: transparent;
+}
+
+#inner-box {
+  margin: 4px 0 0 0;
+  background-color: transparent;
+}
+
+#scroll {
+  margin: 4px 0 0 0;
+}
+
+/* поле пошуку */
+#input {
+  margin: 4px 4px 8px 4px;
+  padding: 6px 10px;
+  border: 1px solid alpha(@accent, 0.45);
+  border-radius: 10px;
+  color: @text;
+  caret-color: @accent;
+  background-color: @field;
+  box-shadow: none;
+}
+
+#input:focus {
+  border-color: @border;
+}
+
+/* рядок списку */
+#entry {
+  padding: 8px;
+  border-radius: 10px;
+  background-color: transparent;
+}
+
+#text {
+  color: @text;
+  font-size: 14px;
+  text-shadow: 0 1px 2px alpha(black, 0.6);   /* читається і на прозорому фоні */
+}
+
+#img {
+  margin-right: 10px;
+  margin-left: 4px;
+}
+
+/* Порядок важливий: :hover ПЕРЕД :selected.
+   Раніше hover стояв нижче і перебивав вибраний рядок — наведення на нього робило його сірим. */
+#entry:hover {
+  background-color: alpha(@accent, 0.15);
+}
+
+#entry:selected {
+  background-color: @accent;
+}
+
+#entry:selected #text {
+  color: @onAccent;
+  text-shadow: none;
+}

@@ -1,0 +1,39 @@
+{
+  "layer": "top", // Waybar at top layer
+  "position": "top", // Waybar position (top|bottom|left|right)
+  // "height": 16, // Waybar height (to be removed for auto height)
+  // "width": 1280, // Waybar width
+  "spacing": 0, // Gaps between modules (4px)
+  "margin-top": 0,
+  "margin-left": 0,
+  "margin-right": 0,
+  "mode": "dock",
+  "reload_style_on_change": true,
+  "include": [
+    "~/.config/waybar/modules.json",
+    "~/.config/waybar/quicklinks.json",
+    "~/.config/waybar/hardware.json",
+    "~/.config/waybar/media.json",
+    "~/.config/waybar/brightness.json"
+  ],
+  "modules-left": [
+    "custom/appmenu",
+    // "group/quicklinks",
+    "tray",
+    //"bluetooth",
+    //"network",
+    //"hyprland/window"
+    //"group/brightness
+    "group/media",
+  ],
+  "modules-center": [
+    "hyprland/workspaces"
+  ],
+  "modules-right": [
+    "group/hardware",
+    "group/connect",          // буфер обміну, мережа й Bluetooth — праворуч
+    "clock",
+    "hyprland/language",
+    "custom/notification"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "apps": [
+    "google-chrome.desktop",
+    "org.telegram.desktop.desktop",
+    "discord.desktop",
+    "steam.desktop",
+    "org.kde.dolphin.desktop",
+    "kitty.desktop",
+    "com.microsoft.VSCode.desktop",
+    "org.kde.kate.desktop"
+  ]
+}

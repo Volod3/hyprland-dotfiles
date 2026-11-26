@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Меню вибору теми (wofi) — скляна панель у кольорі активної теми.
+# Відкривається по Pause/Break, SUPER+ALT+B або `theme-switch menu`.
+set -uo pipefail
+BASE="${XDG_CONFIG_HOME:-$HOME/.config}/theme-switch"
+PIDFILE="/tmp/theme-menu.pid"
+
+# ===== Toggle: повторний Pause/SUPER+ALT+B закриває меню, а не відкриває друге =====
+HOPFILE="/tmp/theme-menu-hop"
+if [ -f "$PIDFILE" ]; then
+  OLD="$(cat "$PIDFILE" 2>/dev/null || true)"
+  if [ -n "${OLD:-}" ] && kill -0 "$OLD" 2>/dev/null; then
+    kill "$OLD" 2>/dev/null
+    pkill -x wofi 2>/dev/null
+    rm -f "$PIDFILE"
+    # повертаємо на стіл, з якого пішли (записує інстанс, що відкривав меню)
+    if [ -s "$HOPFILE" ]; then
+      WS="$(cat "$HOPFILE" 2>/dev/null || true)"
+      [ -n "$WS" ] && hyprctl dispatch "hl.dsp.focus({workspace=$WS})" >/dev/null 2>&1
+      rm -f "$HOPFILE"
+    fi
+    exit 0
+  fi
+  rm -f "$PIDFILE"
+fi
+printf '%s\n' "$$" > "$PIDFILE"
+
+cur="$(cat "$BASE/state/current" 2>/dev/null || echo madara)"
+
+# ===== Меню показуємо ЛИШЕ на порожньому робочому столі =====
+# (щоб панель вибору теми не висіла поверх вікон програм)
+UID_="$(id -u)"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID_}"
+# wofi — Wayland-застосунок: без WAYLAND_DISPLAY він не підключається до композитора
+# і меню просто не з'являється (цю змінну бінд не завжди передає — тому виявляємо самі).
+if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+  for f in /run/user/"$UID_"/wayland-*; do
+    case "$f" in *.lock) continue ;; esac
+    [ -S "$f" ] && { export WAYLAND_DISPLAY="$(basename "$f")"; break; }
+  done
+fi
+if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+  for d in /run/user/"$UID_"/hypr/*/; do
+    [ -S "$d/.socket.sock" ] || continue
+    s="$(basename "$d")"
+    if HYPRLAND_INSTANCE_SIGNATURE="$s" hyprctl monitors >/dev/null 2>&1; then
+      export HYPRLAND_INSTANCE_SIGNATURE="$s"; break
+    fi
+  done
+fi
+
+HOP_BACK=""   # стіл, на який треба повернутись після меню
+if [ "${1:-}" != "--force" ]; then
+  read -r busy orig_ws free_ws <<<"$(python3 - <<'PY'
+import json, subprocess
+def j(*a):
+    return json.loads(subprocess.check_output(("hyprctl", "-j") + a))
+try:
+    ws = j("activeworkspace")["id"]
+    clients = j("clients")
+    busy = sum(1 for c in clients
+               if c["workspace"]["id"] == ws and c.get("mapped", True) and not c.get("hidden", False))
+    used = {c["workspace"]["id"] for c in clients if c.get("mapped", True) and not c.get("hidden", False)}
+    free = 0
+    for n in (10, 9, 8, 7, 6, 5, 4, 3, 2, 1):
+        if n not in used and n != ws:
+            free = n
+            break
+    print(busy, ws, free)
+except Exception:
+    print(0, 0, 0)
+PY
+)"
+  # на зайнятому столі — автоматично переходимо на порожній, щоб меню не висіло поверх програм
+  if [ "${busy:-0}" -gt 0 ] && [ "${free_ws:-0}" -gt 0 ]; then
+    HYPRLAND_INSTANCE_SIGNATURE="${HYPRLAND_INSTANCE_SIGNATURE:-}" \
+      hyprctl dispatch "hl.dsp.focus({workspace=$free_ws})" >/dev/null 2>&1
+    HOP_BACK="$orig_ws"
+    printf '%s\n' "$orig_ws" > /tmp/theme-menu-hop
+    notify-send -i dialog-information -a "Тема" -t 1800 \
+      "Меню тем на вільному столі $free_ws" \
+      "На столі $orig_ws $busy вікон(а) — повернусь туди після вибору." 2>/dev/null
+    sleep 0.45
+  fi
+fi
+
+ids=(); lines=(); i=0
+for d in "$BASE"/themes/*/; do
+  ID=""; LABEL=""; ICON=""
+  # shellcheck disable=SC1090
+  . "$d/theme.conf" 2>/dev/null
+  [ -n "${ID:-}" ] || continue
+  i=$((i + 1))
+  icon="${ICON:-󰸉}"
+  mark="  "; [ "$ID" = "$cur" ] && mark="󰄬 "
+  ids+=("$ID")
+  lines+=("$mark$icon   $i · $LABEL")
+done
+
+style="$BASE/menu.css"
+stylearg=()
+[ -f "$style" ] && stylearg=(--style "$style")
+
+choice="$(printf '%s\n' "${lines[@]}" | wofi --dmenu \
+  --prompt "Тема столу" \
+  --width 440 --height 220 --hide-scroll \
+  --cache-file /dev/null \
+  "${stylearg[@]}" 2>/dev/null)"
+
+back() {
+  # повертаємось на стіл, з якого прийшли (вікна знову з'являються з анімацією)
+  if [ -n "${HOP_BACK:-}" ] && [ "$HOP_BACK" -gt 0 ] 2>/dev/null; then
+    hyprctl dispatch "hl.dsp.focus({workspace=$HOP_BACK})" >/dev/null 2>&1
+  fi
+  rm -f "$PIDFILE" /tmp/theme-menu-hop
+}
+
+# якщо меню закрили ззовні (повторний Pause, Esc, kill) — все одно повертаємось
+trap 'back' EXIT
+trap 'back; exit 0' TERM INT
+
+[ -n "${choice:-}" ] || { back; exit 0; }
+
+num="$(printf '%s' "$choice" | sed -E 's/^[^0-9]*([0-9]+).*/\1/')"
+case "$num" in ''|*[!0-9]*) back; exit 0 ;; esac
+id="${ids[$((num - 1))]:-}"
+[ -n "$id" ] || { back; exit 0; }
+"$BASE/bin/theme-switch" apply "$id"
+back

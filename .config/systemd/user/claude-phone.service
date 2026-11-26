@@ -1,0 +1,18 @@
+[Unit]
+Description=Claude Code Remote Control — писати завдання з телефона (застосунок Claude → Code → «ПК вдома»)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+WorkingDirectory=%h/Claude
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+# tmux дає програмі термінал (подивитись: tmux attach -t claude-phone, вийти: Ctrl+B, D)
+ExecStart=/usr/bin/tmux new-session -d -s claude-phone "while true; do %h/.local/bin/claude remote-control --name 'ПК вдома' --verbose 2>>$HOME/.cache/claude-phone.log; echo 'Remote Control зупинився — перезапуск за 10 с'; sleep 10; done"
+ExecStop=/usr/bin/tmux kill-session -t claude-phone
+ExecStopPost=/bin/sh -c "pkill -f 'native-binary/claude remote-control'; exit 0"
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

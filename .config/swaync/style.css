@@ -1,0 +1,319 @@
+@import "theme-colors.css";   /* кольори теми — генерує ~/.config/wallpapers_QS/tools/theme */
+/* ╔══════════════════════════════════════════════════════════════╗
+   ║  swaync — тема «небо й хмари» (кольори взято з шпалер),        ║
+   ║  у тон до waybar. Перечитати стиль: swaync-client -rs           ║
+   ║  Довідник усіх селекторів: style.css_old (стандартний шаблон).  ║
+   ╚══════════════════════════════════════════════════════════════╝ */
+
+/* ════════ ТЕМА «темне скло»: чорно-сірий + блакитний + рожевий, прозорість і розмиття ════════
+   (такі самі кольори — у waybar, боковій панелі, вікнах і налаштуваннях) */
+
+* {
+  all: unset;
+  font-size: 1rem;
+  font-weight: 700;
+  font-family:
+    "JetBrainsMono Nerd Font",     /* справжня назва родини (як у fc-list) */
+    JetBrainsMonoNerdFont,
+    Roboto,
+    sans-serif;
+  /* лише кольори й тіні: "transition: all" анімував і розміри/відступи всього підряд */
+  transition:
+    background-color 200ms ease-in-out,
+    color 200ms ease-in-out,
+    box-shadow 200ms ease-in-out,
+    opacity 200ms ease-in-out;
+}
+
+/* ---------- Центр сповіщень ---------- */
+.control-center {
+  background-color: @surface;
+  border: 2px solid @border;           /* 2px — як лінія на бульбашках waybar */
+  border-radius: 20px;
+  /* текст на прозорому фоні: легка тінь, щоб читався поверх світлих вікон */
+  text-shadow: 0 1px 2px alpha(black, 0.7);
+  padding: 12px;
+  box-shadow: 0 0 16px 4px @shadow;
+  margin: 8px;
+  color: @text;
+}
+
+.control-center-list {
+  background: transparent;
+}
+
+.floating-notifications,
+.blank-window {
+  background: transparent;
+}
+
+/* ---------- Заголовок «Сповіщення» + «Очистити» ---------- */
+.widget-title {
+  color: @text;
+  font-size: 1.1rem;
+  font-weight: 900;
+  padding: 8px 6px;
+}
+
+.widget-title > button {
+  background-color: @card;
+  color: @accent;
+  border-radius: 999px;
+  padding: 6px 14px;
+  box-shadow: 0 0 6px 2px @shadow inset;
+}
+
+.widget-title > button:hover {
+  background-color: @hoverBg;
+  color: @hoverFg;
+}
+
+/* ---------- «Не турбувати» ---------- */
+.widget-dnd {
+  padding: 8px 6px;
+  color: @text;
+}
+
+.widget-dnd > switch {
+  border-radius: 999px;
+  background-color: @card;
+  box-shadow: 0 0 6px 2px @shadow inset;
+  min-width: 44px;
+  min-height: 24px;
+}
+
+.widget-dnd > switch:checked {
+  background-color: @accent;
+}
+
+.widget-dnd > switch slider {
+  background-color: @text;
+  border-radius: 999px;
+  margin: 2px;
+  min-width: 20px;
+  min-height: 20px;
+}
+
+/* ---------- «Блокують сон» ---------- */
+.widget-inhibitors {
+  padding: 8px 6px;
+  color: @text;
+}
+
+.widget-inhibitors > button {
+  background-color: @card;
+  color: @accent;
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+
+.widget-inhibitors > button:hover {
+  background-color: @hoverBg;
+  color: @hoverFg;
+}
+
+/* ---------- Одне сповіщення (і в списку, і спливне) ---------- */
+.notification-row {
+  outline: none;
+  margin: 6px 2px;
+}
+
+.notification-row:focus,
+.notification-row:hover {
+  opacity: 0.95;
+}
+
+.notification-background {
+  background: transparent;
+}
+
+.notification {
+  text-shadow: 0 1px 2px alpha(black, 0.7);
+  background-color: @card;
+  border-radius: 16px;
+  padding: 10px;
+  box-shadow: 0 0 10px 2px @shadow inset;
+  border: 1px solid alpha(@pink, 0.35);
+}
+
+/* уся картка — це кнопка «відкрити»; підсвітка при наведенні */
+.notification-default-action {
+  border-radius: 12px;
+}
+
+.notification-default-action:hover {
+  background-color: alpha(@accent, 0.08);
+}
+
+.notification-content {
+  padding: 4px;
+}
+
+.notification .summary {
+  color: @text;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.notification .body {
+  color: @subtext;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.notification .time {
+  color: @subtext;
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin-right: 28px;          /* щоб час не ховався під кнопкою ✕ */
+}
+
+.notification .image {
+  border-radius: 12px;
+  margin: 4px 8px 4px 0;
+}
+
+/* Кнопка ✕. Вона лежить ПОРУЧ із .notification, а не всередині, тому
+   ".notification .close-button" (як було) її не знаходило — кнопка лишалась без стилю. */
+.close-button {
+  background-color: @card;
+  color: @danger;
+  border-radius: 999px;
+  min-width: 22px;
+  min-height: 22px;
+  margin: 8px 8px 0 0;
+}
+
+.close-button:hover {
+  background-color: @danger;
+  color: @hoverFg;
+}
+
+/* Терміновість */
+.notification.critical {
+  border: 1px solid @danger;
+}
+
+.notification.critical .summary {
+  color: @danger;
+}
+
+.notification.low .summary {
+  color: @subtext;
+}
+
+/* Прогрес-бар у сповіщенні (гучність, завантаження...) */
+.notification progressbar {
+  min-height: 6px;
+  margin-top: 6px;
+}
+
+.notification progressbar trough {
+  background-color: alpha(@text, 0.15);
+  border-radius: 999px;
+  min-height: 6px;
+}
+
+.notification progressbar progress {
+  background-color: @accent;
+  border-radius: 999px;
+  min-height: 6px;
+}
+
+/* ---------- Кнопки дій (Reply, Відкрити...) ----------
+   Сама кнопка — це "> button" усередині .notification-action. */
+.notification-action > button {
+  background-color: @card;
+  color: @text;
+  border-radius: 999px;
+  padding: 4px 12px;
+  margin: 4px 2px 0 0;
+  box-shadow: 0 0 4px 1px @shadow inset;
+}
+
+.notification-action > button:hover {
+  background-color: @hoverBg;
+  color: @hoverFg;
+}
+
+/* Поле швидкої відповіді */
+.inline-reply-entry {
+  background-color: alpha(#060c18, 0.9);
+  color: @text;
+  caret-color: @accent;
+  border: 1px solid @border;
+  border-radius: 12px;
+  padding: 4px 8px;
+}
+
+/* ---------- Групи сповіщень ---------- */
+.notification-group-headers,
+.notification-group-buttons {
+  color: @text;
+  margin: 0 12px;
+}
+
+.notification-group.collapsed.not-expanded {
+  opacity: 0.45;
+}
+
+/* ---------- Порожній стан («Сповіщень нема») ----------
+   Справжній селектор — .control-center-list-placeholder (".no-notifications" не існує). */
+.control-center-list-placeholder {
+  color: @subtext;
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 40px 0;
+  opacity: 0.7;
+}
+
+.control-center-list-placeholder image {
+  -gtk-icon-size: 48px;        /* величезний «!» зменшуємо */
+  opacity: 0.6;
+}
+
+/* ---------- Плитки-віджети (mpris, гучність, яскравість, кнопки) ---------- */
+.widget-mpris,
+.widget-volume,
+.widget-backlight,
+.widget-buttons-grid {
+  background-color: @card;
+  border-radius: 16px;
+  padding: 8px;
+  margin: 6px 0;
+  box-shadow: 0 0 8px 2px @shadow inset;
+}
+
+.widget-mpris .widget-mpris-title {
+  color: @text;
+  font-weight: 900;
+}
+
+.widget-mpris .widget-mpris-subtitle {
+  color: @subtext;
+}
+
+.widget-buttons-grid flowboxchild > button {
+  background-color: @card;
+  color: @text;
+  border-radius: 12px;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+.widget-buttons-grid flowboxchild > button:hover,
+.widget-buttons-grid flowboxchild > button.toggle:checked {
+  background-color: @accent;
+  color: #0e1420;
+}
+
+/* ---------- Смуга прокрутки ---------- */
+scrollbar {
+  background: transparent;
+}
+
+scrollbar slider {
+  background-color: alpha(@accent, 0.5);
+  border-radius: 999px;
+  min-width: 6px;
+}

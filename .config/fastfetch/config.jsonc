@@ -1,0 +1,109 @@
+{
+    "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+    "logo": {
+        "type": "kitty-direct",
+        "source": "~/.config/fastfetch/my_image_fixed.png",
+        "width": 24,
+        "height": 12,
+        "padding": {
+            "top": 0,
+            "left": 0,
+            "right": 2
+        }
+    },
+    "display": {
+        "separator": " : "
+    },
+    "modules": [
+        {
+                "type": "custom",
+                "format": "┌───────────────────────── Software ──────────────────────────┐",
+                "color": "blue"
+        },
+        {
+                "type": "custom",
+                "key": "  USR ",
+                "format": "Voltimeter",
+                "color": "blue"
+        },
+        {
+                "type": "os",
+                "key": "  OS  ",
+                "keyColor": "blue"
+        },
+        {
+                "type": "command",
+                "key": " 󰒋 KERN",
+                "keyColor": "blue",
+                "text": "uname -r"
+        },
+        {
+                "type": "command",
+                "key": " 󱂬 WM  ",
+                "keyColor": "blue",
+                "text": "echo \"$(hyprctl version | awk 'NR==1{print $1, $2}') ($XDG_SESSION_TYPE)\""
+        },
+        {
+                "type": "command",
+                "key": " 󱆃 SH  ",
+                "keyColor": "blue",
+                "text": "fish --version | awk '{print \"Fish\", $3}'"
+        },
+        {
+                "type": "command",
+                "key": " 󰆍 TERM",
+                "keyColor": "blue",
+                "text": "kitty --version | awk '{print \"kitty\", $2}'"
+        },
+        {
+                "type": "custom",
+                "format": "└─────────────────────────────────────────────────────────────┘",
+                "color": "blue"
+        },
+        "break",
+        {
+                "type": "custom",
+                "format": "┌───────────────────────── Hardware ──────────────────────────┐",
+                "color": "cyan"
+        },
+        {
+                "type": "command",
+                "key": " 󰌢 PC  ",
+                "keyColor": "cyan",
+                "text": "echo \"$(awk '{print $1}' /sys/class/dmi/id/sys_vendor) $(cat /sys/class/dmi/id/product_family)\""
+        },
+        {
+                "type": "cpu",
+                "key": " 󰻠 CPU ",
+                "keyColor": "cyan",
+                "format": "{1}"
+        },
+        {
+                "type": "gpu",
+                "key": " 󰢮 GPU ",
+                "keyColor": "cyan"
+        },
+        {
+                "type": "command",
+                "key": " 󰍛 MEM ",
+                "keyColor": "cyan",
+                "text": "free -b | awk 'NR==2{printf \"%.2f GiB / %.2f GiB (%d%%)\", $3/2^30, $2/2^30, $3*100/$2}'"
+        },
+        {
+                "type": "command",
+                "key": " 󰋊 SYS ",
+                "keyColor": "cyan",
+                "text": "df -B1 / | awk 'NR==2{printf \"%.2f GiB / %.2f GiB (%s)\", $3/2^30, $2/2^30, $5}'"
+        },
+        {
+                "type": "custom",
+                "format": "└─────────────────────────────────────────────────────────────┘",
+                "color": "cyan"
+        },
+        {
+                "type": "colors",
+                "symbol": "circle"
+        },
+        "break"
+]
+}

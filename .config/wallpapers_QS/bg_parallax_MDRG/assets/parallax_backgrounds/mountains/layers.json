@@ -1,0 +1,45 @@
+{
+  "layers": [
+    {
+      "file": "./assets/parallax_backgrounds/mountains/layer00.png",
+      "crop": true,
+      "depth": 0.002
+    },
+    {
+      "file": "./assets/parallax_backgrounds/mountains/layer00m.png",
+      "crop": true,
+      "depth": 0.002
+    },
+    {
+      "file": "./assets/parallax_backgrounds/mountains/layer01.png",
+      "crop": true,
+      "depth": 0.141
+    },
+    {
+      "file": "./assets/parallax_backgrounds/mountains/layer02.png",
+      "crop": true,
+      "depth": 0.217
+    },
+    {
+      "file": "./assets/parallax_backgrounds/mountains/layer03.png",
+      "crop": true,
+      "depth": 0.3
+    },
+    {
+      "file": "./assets/parallax_backgrounds/mountains/layer04.png",
+      "crop": true,
+      "depth": 0.425
+    },
+    {
+      "file": "./assets/parallax_backgrounds/mountains/layer05.png",
+      "crop": true,
+      "depth": 0.541
+    },
+    {
+      "file": "./assets/parallax_backgrounds/mountains/layer06.png",
+      "crop": true,
+      "depth": 0.826
+    }
+  ],
+  "strength": 60
+}

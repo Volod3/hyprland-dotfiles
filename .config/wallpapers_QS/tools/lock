@@ -1,0 +1,5 @@
+#!/bin/sh
+# Заблокувати екран (Quickshell, bg_lock). Якщо вже заблоковано — нічого не робити.
+# Використовують: Win+L, меню живлення, hypridle (перед сном / таймер блокування), кришка.
+pgrep -f "qs -p .*bg_lock/shell.qml" >/dev/null && exit 0
+exec qs -p "$HOME/.config/wallpapers_QS/bg_lock/shell.qml"

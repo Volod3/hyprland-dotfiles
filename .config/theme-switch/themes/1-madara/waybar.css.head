@@ -1,0 +1,44 @@
+@define-color rosewater #f5e0dc;
+@define-color flamingo #f2cdcd;
+@define-color pink #f5c2e7;
+@define-color mauve #cba6f7;
+@define-color red #f38ba8;
+@define-color maroon #eba0ac;
+@define-color peach #fab387;
+@define-color yellow #f9e2af;
+@define-color green #a6e3a1;
+@define-color teal #94e2d5;
+@define-color sky #89dceb;
+@define-color sapphire #74c7ec;
+@define-color blue #89b4fa;
+@define-color lavender #b4befe;
+
+
+
+/*@define-color base alpha(#000000, 0.1);
+@define-color surface alpha(#101014, 0.55);
+@define-color popup alpha(#101014, 0.88);
+@define-color text #f2f2f7;
+@define-color accent #ffffff;
+@define-color border alpha(#ffffff, 0.18);
+@define-color hoverBg alpha(#ffffff, 0.9);
+@define-color hoverFg #000000;
+@define-color activeBg alpha(#ffffff, 0.9);
+@define-color activeFg #000000;
+@define-color shadow alpha(#ffffff, 0.1);*/
+
+
+
+@define-color base alpha(#000000, 0.1);
+@define-color surface alpha(@lavender, 0.15);
+@define-color surface alpha(#000000, 0.5);
+@define-color text #cdd6f4;
+@define-color hoverBg alpha(@mauve, 1);
+@define-color hoverFg #000000;
+@define-color activeBg alpha(@mauve, 1);
+@define-color activeFg #000000;
+@define-color shadow alpha(@lavender, 0.25);
+
+
+
+

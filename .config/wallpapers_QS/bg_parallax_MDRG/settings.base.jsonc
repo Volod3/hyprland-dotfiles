@@ -1,0 +1,271 @@
+// ╔══════════════════════════════════════════════════════════════════╗
+// ║  Налаштування паралакс-шпалер (Quickshell + Hyprland)             ║
+// ║  УВАГА: генерується з settings.base.jsonc інструментом тем         ║
+// ║  (tools/theme). Правити треба settings.base.jsonc, не цей файл.    ║
+// ║  Можна писати коментарі (// і /* */) і кому після останнього       ║
+// ║  елемента. Помилка в файлі — лишаються попередні налаштування,    ║
+// ║  а що не так, видно в консолі qs.                                 ║
+// ╚══════════════════════════════════════════════════════════════════╝
+//
+// ── Спільне для clock, player, visualizer і кожного віджета ──
+//   "atLayer": N       у площині шару N: над його картинкою і рухається точно як він
+//   "afterLayer": N    між шарами N і N+1, рухається посередині між ними
+//   "followLayer": N   (необов'язково) рухатись як шар N; можна дробове: 6.5
+//   "zOffset": 0.1     (необов'язково) вище/нижче серед сусідів на тому ж шарі
+//   "parallax": false  стояти на місці
+// Шари нумеруються з 0: перший у parallax.layers — це шар 0 (найдальший).
+//
+// Шляхи до файлів: відносні (від папки з shell.qml), "~/...", "/абсолютні" або URL.
+
+{
+  // ═══════════════════ ПАРАЛАКС ═══════════════════
+  "parallax": {
+    // Від найдальшого (перший) до найближчого (останній).
+    // Для шару: "x"/"y" — зсув у px, "scale", "opacity",
+    //           "crop": true — заповнити екран, "speed": px/с — самоплив по колу
+    "layers": __LAYERS__,
+
+    "strength": __STRENGTH__,     // макс. зсув найближчого шару, px. Шари згенеровано під 60 (run.sh ... -s 60) — більше не став
+    "invert": false,    // true = шари рухаються в бік курсора
+    "smoothMs": 150,    // плавність руху, мс
+    "pollMs": 33        // як часто питати в Hyprland позицію курсора, мс
+  },
+
+
+  // ═══════════════════ ВІЗУАЛІЗАТОР (cava) ═══════════════════
+  "visualizer": {
+    "enabled": true,
+    "afterLayer": __VIZ_LAYER__,           // за деревами (шар задає тема — tools/theme)
+
+    "bars": {
+      "count": 256,
+      "bidirectional": true,   // true = смуги ростуть і вгору, і вниз від центральної лінії
+      "maxHeight": 300,        // px (для bidirectional — у кожен бік)
+      "spacing": 0,            // проміжок між смугами, px
+      "overflow": -300,        // наскільки ширше за екран з кожного боку, px (мінус = вужче)
+      "offsetY": -600,         // базова лінія від низу екрана, px (мінус = вище)
+      "radius": 6,             // заокруглення смуг, px
+      "opacity": 0.8,
+      "gain": 1.5,             // підсилення сигналу
+
+      "colorTop": "__VIZ_TOP__",
+      "colorBottom": "__VIZ_BOTTOM__"
+    },
+
+    "glow": {
+      "enabled": true,
+      "opacity": 0.9,
+      "blur": 1.0,             // 0..1
+      "radius": 48             // px
+    },
+
+    "cava": {
+      "framerate": 60,
+      "noiseReduction": 77,
+      "input": "pipewire",
+      "source": "auto"
+    }
+  },
+
+
+  // ═══════════════════ ГОДИННИК ═══════════════════
+  "clock": {
+    "enabled": true,
+    "afterLayer": __CLOCK_LAYER__,           // над небом, але за деревами (шар задає тема)
+    "zOffset": 0.1,            // над візуалізатором
+
+    "x": 960,                  // центр екрана 1920x1080
+    "y": 300,
+    "anchor": "center",        // "top-left" або "center" (тоді x/y — центр)
+
+    "format": "hh:mm:ss",         // як у Qt: "hh:mm:ss", "dd.MM  hh:mm" ...
+    "color": "#e8d5e3",
+    "font": {
+      "family": "Comfortaa",     // ~/.local/share/fonts/clock: Comfortaa, Quicksand, Outfit, Orbitron, Righteous, Bebas Neue
+      "size": 280,
+      "weight": 700,             // 300 = тонкий ... 700 = жирний
+      "style": "Bold"            // Light / Regular / Medium / SemiBold / Bold
+    }
+  },
+
+
+  // ═══════════════════ МУЗИЧНИЙ ПЛЕЄР (MPRIS) ═══════════════════
+  "player": {
+    "enabled": true,
+    "afterLayer": 11,          // поверх усіх шарів, щоб дерева не закривали кнопки
+
+    "x": 860,                  // (1920 - 200) / 2 — по центру
+    "y": 690,                  // 690 + 350 = 1040: уся картка на екрані
+    "width": 200,
+    "height": 350,
+
+    // кілька джерел звуку = кілька карток
+    "stack": {
+      "direction": "both-horizontal",   // right / left / down / up / both-horizontal / both-vertical
+      "spacing": 20,
+      "maxCards": 0,                    // 0 = без обмеження
+      "hideWhenIdle": true,             // ховати, коли плеєрів нема
+      "hideStopped": true,              // ховати зупинені джерела, якщо є активні
+      "dedupe": true,                   // ховати дублі (той самий трек з браузера)
+      "ignore": []                      // plasma-browser-integration тепер не ігнорується: в нього обкладинка й виконавець
+                                        // (після закриття браузера ховається автоматично)
+    },
+
+    "show": {
+      "cover": true,
+      "time": true
+    },
+
+    // колір + прозорість (0..1) окремо
+    "colors": {
+      "background": "#1d3a6b",  "backgroundAlpha": 0.35,
+      "border":     "#a8cfff",  "borderAlpha": 0.35,
+
+      "text": "#dce4f7",
+      "titleAlpha": 1.0,
+      "artistAlpha": 0.72,
+      "timeAlpha": 0.6,
+
+      "cover":    "#2a3f6e",  "coverAlpha": 0.2,
+      "progress": "#8cc8ff",  "progressAlpha": 1.0,  "progressTrackAlpha": 0.25,
+      "button":   "#2a3f6e",  "buttonAlpha": 0.26,   "buttonBorderAlpha": 0.35,
+      "icon":     "#dce4f7",  "iconAlpha": 1.0
+    },
+
+    // розміри, px
+    "sizes": {
+      "cardRadius": 28,
+      "borderWidth": 1,
+      "coverMargin": 24,
+      "coverRadius": 18,
+
+      "titleSize": 16,
+      "artistSize": 13,
+      "timeSize": 11,
+
+      "iconSize": 26,
+      "playIconSize": 24,
+      "playButtonSize": 54,
+      "buttonSpacing": 22,
+      "buttonsBottomMargin": 18,
+
+      "progressHeight": 4,
+      "seekKnobSize": 12,
+
+      "idleIconSize": 90,
+      "idleTextSize": 16
+    },
+
+    "text": {
+      "fontFamily": "",                  // "" = шрифт за замовчуванням
+      "idleText": "Нічого не грає",
+      "idleIcon": "♪",
+      "coverPlaceholder": "♪",
+      "unknownTrack": "Невідомий трек"
+    },
+
+    // згортання картки по висоті; затиснута кнопка (holdAllMs) згортає/розгортає всі
+    "collapse": {
+      "enabled": true,
+      "startCollapsed": false,
+      "height": 96,                      // висота згорнутої картки, px
+      "hideButtonSize": 24,
+      "hideButtonAlwaysVisible": false,  // false = «−» з'являється при наведенні
+      "hideIcon": "−",
+      "expandIcon": "+",
+      "holdAllMs": 1000,
+
+      // кнопки у згорнутому вигляді
+      "iconSize": 18,
+      "playButtonSize": 28,
+      "playIconSize": 14,
+      "buttonsBottomMargin": 8
+    },
+
+    "behavior": {
+      "keepPausedOnSkip": true           // якщо стояла пауза — після ⏮/⏭ лишити паузу
+    },
+
+    "timing": {
+      "pollMs": 1000                     // як часто оновлювати час відтворення, мс
+    },
+
+    "animation": {
+      "enabled": true,                   // false = усі анімації вимкнено
+      "appearMs": 500,                   // поява картки
+      "fadeMs": 300,                     // «грає» <-> «нічого не грає»
+      "collapseMs": 350,
+      "trackChangeMs": 260,              // перегортання треку
+      "trackSlidePx": 40,
+      "buttonAnimMs": 180,
+      "hoverScale": 1.12,
+      "pressScale": 0.86,
+      "progressAnimMs": 1000,
+      "idlePulse": true
+    },
+
+    // повзунок гучності поверх обкладинки
+    "volume": {
+      "enabled": false,                  // повзунок гучності прибрано з плеєра
+      "alwaysVisible": false,            // false = з'являється при наведенні
+      "wheel": true,                     // коліщатко над карткою міняє гучність
+      "wheelStep": 0.05,                 // крок за одне клацання коліщатка (0..1)
+      "height": 28,
+      "margin": 10,
+      "background": "#16223d",
+      "backgroundAlpha": 0.55
+    }
+  },
+
+
+  // ═══════════════════ ВІДЖЕТИ: картинки, гіфки, відео ═══════════════════
+  // Параметри віджета:
+  //   "type": "image" | "video";  "source": шлях
+  //   "x", "y";  "anchor": "top-left" | "center";  "width"/"height" (0 або нема = авто)
+  //   "opacity", "rotation", "scale", "mirror", "radius", "fit": contain/cover/stretch/none
+  //   "borderWidth", "borderColor", "borderAlpha"
+  //   "onClick": { "left": "shell-команда", "right": ["програма", "арг"], "middle": ... }
+  //   "hit": "alpha" | "box",  "hitAlpha": 20,  "pointer": false
+  //   відео: "volume", "muted", "loop", "autoplay", "speed", "clickToPause",
+  //          "controls": true | { "pause", "seek", "volume", "always", "color", ... }
+  "widgets": {
+    "enabled": false,
+    "items": [
+      {
+        "type": "image",
+        "source": "./assets/gifs/mimi_spining.gif",
+        "x": 1470, "y": 860,
+        "height": 200,
+        "anchor": "center",
+        "atLayer": 8,
+        "opacity": 1.0,
+
+        "onClick": {
+          "left": "notify-send 'THE MIMI!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' & mpv --no-video --really-quiet ./assets/sounds/cute-squeaky-toy-noise.mp3",
+          "right": ["kitty", "-e", "htop"]
+        }
+      },
+      {
+        "type": "video",
+        "source": "~/Відео/clip.mp4",
+        "x": 100, "y": 600,
+        "width": 480,
+        "afterLayer": 7,
+
+        "volume": 0.6,
+        "muted": false,
+        "loop": false,
+        "controls": { "pause": true, "seek": true, "volume": true, "always": false }
+      }
+    ]
+  },
+
+
+  // ═══════════════════ КУРСОР НАД ШПАЛЕРАМИ ═══════════════════
+  "cursor": {
+    "enabled": true,
+    "mode": "idle",         // visible / idle / instant / hidden
+    "hideAfterMs": 3000,    // для idle
+    "instantMs": 60         // для instant
+  }
+}

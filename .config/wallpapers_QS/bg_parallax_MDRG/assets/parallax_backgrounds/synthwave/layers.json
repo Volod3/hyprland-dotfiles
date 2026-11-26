@@ -1,0 +1,30 @@
+{
+ "layers": [
+  {
+   "file": "./assets/parallax_backgrounds/synthwave/layer00.png",
+   "crop": true,
+   "depth": 0.02
+  },
+  {
+   "file": "./assets/parallax_backgrounds/synthwave/layer01.png",
+   "crop": true,
+   "depth": 0.08
+  },
+  {
+   "file": "./assets/parallax_backgrounds/synthwave/layer02.png",
+   "crop": true,
+   "depth": 0.28
+  },
+  {
+   "file": "./assets/parallax_backgrounds/synthwave/layer03.png",
+   "crop": true,
+   "depth": 0.5
+  },
+  {
+   "file": "./assets/parallax_backgrounds/synthwave/layer04.png",
+   "crop": true,
+   "depth": 0.85
+  }
+ ],
+ "strength": 30
+}

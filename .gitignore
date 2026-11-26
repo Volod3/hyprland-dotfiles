@@ -1,0 +1,10 @@
+*.before*
+*.bak
+*.tmp
+*.log
+__pycache__/
+*.pyc
+*.onnx
+chat_history*.json
+.config/wallpapers_QS/bg_pet/brave-api-key
+.config/fish/fish_variables

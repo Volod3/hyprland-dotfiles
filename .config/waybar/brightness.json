@@ -1,0 +1,19 @@
+{
+  "backlight/slider": {
+    "min": 10,
+    "max": 100,
+    "orientation": "vertical"
+  },
+
+  "backlight": {
+    "format": "{percent}%",
+    "tooltip": false,
+    "min-brightness": 10,
+    "scroll-step": 5
+  },
+
+  "group/brightness": {
+    "orientation": "horizontal",
+    "modules": ["backlight", "backlight/slider"]
+  }
+}

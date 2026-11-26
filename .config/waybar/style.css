@@ -1,0 +1,404 @@
+@import "theme-colors.css";
+@define-color rosewater #f5e0dc;
+@define-color flamingo #f2cdcd;
+@define-color pink #f5c2e7;
+@define-color mauve #cba6f7;
+@define-color red #f38ba8;
+@define-color maroon #eba0ac;
+@define-color peach #fab387;
+@define-color yellow #f9e2af;
+@define-color green #a6e3a1;
+@define-color teal #94e2d5;
+@define-color sky #89dceb;
+@define-color sapphire #74c7ec;
+@define-color blue #89b4fa;
+@define-color lavender #b4befe;
+
+
+
+/* Запасна нейтральна (біла) тема — пасує до будь-яких шпалер.
+   Щоб увімкнути: розкоментуй блок і закоментуй блок «ТЕМА» нижче.
+@define-color base alpha(#000000, 0.1);
+@define-color surface alpha(#101014, 0.55);
+@define-color popup alpha(#101014, 0.88);
+@define-color text #f2f2f7;
+@define-color accent #ffffff;
+@define-color border alpha(#ffffff, 0.18);
+@define-color hoverBg alpha(#ffffff, 0.9);
+@define-color hoverFg #000000;
+@define-color activeBg alpha(#ffffff, 0.9);
+@define-color activeFg #000000;
+@define-color shadow alpha(#ffffff, 0.1); */
+
+
+
+/* ════════ ТЕМА ════════
+   Акцентний колір — ОДИН рядок: заміни @mauve на інший колір вище (@pink, @blue, @sky...)
+   або на свій, напр. #d982b5, — і зміниться все: столи, підказки, меню, повзунок яскравості. */
+/*@define-color accent @mauve;
+@define-color surface alpha(#181825, 0.5);
+@define-color popup alpha(#181825, 0.9);
+@define-color text #cdd6f4;
+@define-color hoverBg @accent;
+@define-color hoverFg #000000;
+@define-color activeBg @accent;
+@define-color activeFg #000000;
+@define-color shadow alpha(@lavender, 0.25);*/
+
+/* ════════ Кольори теми — у theme-colors.css (генерує ~/.config/wallpapers_QS/tools/theme, перемикання — Pause) ════════ */
+
+
+* {
+  all: unset;
+  font-size: 1rem;
+  font-weight: 900;
+  font-family:
+    "JetBrainsMono Nerd Font",     /* справжня назва родини (як у fc-list) */
+    JetBrainsMonoNerdFont,
+    Font Awesome,
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  background-clip: border-box;
+}
+
+button {
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 999px;
+  color: @text;
+  box-shadow: 0px 0px 8px 4px @shadow inset;
+  transition:
+    all 50ms cubic-bezier(0.55, 0, 0.28, 1.682),
+    box-shadow 50ms ease-in-out,
+    background-color 200ms ease-in-out;
+}
+
+button:hover {
+  color: @hoverFg;
+  background: @hoverBg;
+}
+
+button.active {
+  color: @activeFg;
+  background: @activeBg;
+}
+
+tooltip {
+  opacity: 1;
+  background-color: @popup;
+  border: 1px solid @accent;
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0px 0px 12px 4px @shadow;
+}
+
+tooltip label {
+  color: @text;
+  padding: 4px 8px;
+}
+
+
+menu {
+  background-color: @popup;
+  border: 1px solid @accent;
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0px 0px 12px 4px @shadow;
+}
+
+menuitem {
+  color: @text;
+  border-radius: 8px;
+  padding: 6px 10px;
+  min-height: 20px;
+}
+
+menuitem:hover {
+  background-color: @hoverBg;
+  color: @hoverFg;
+}
+
+menuitem separator,
+separator {
+  background-color: alpha(@text, 0.15);
+  min-height: 1px;
+  margin: 4px 6px;
+}
+
+
+
+window#waybar.empty #window {
+  background-color: transparent;
+}
+
+#window {
+  margin-right: 8px;
+}
+
+#workspaces,
+#connect,
+#custom-appmenu,
+#quicklinks,
+#media,
+#hardware,
+#brightness,
+#clock,
+#language,
+#bluetooth,
+#network,
+#tray,
+#custom-notification {
+    background-color: @surface;
+    /* ледь помітний рожевий знизу кожної «бульбашки» */
+    background-image: linear-gradient(to bottom, alpha(@softpink, 0) 50%, alpha(@softpink, 0.13));
+    background-clip: padding-box;
+    border-style: solid;
+    border-width: 0 20px 2px 20px;                        /* знизу 2px — місце під лінію */
+    border-image: url("shape.svg") 0 20 2 20 stretch;     /* нижній зріз 2 — лінія з SVG */
+    border-radius: 0;
+    box-shadow: none;
+}
+
+#brightness {
+  padding: 0 14px;
+}
+
+#backlight-slider slider {
+  min-height: 0;
+  min-width: 0;
+  opacity: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+#backlight-slider trough {
+  min-width: 8px;
+  min-height: 24px;
+  border-radius: 999px;
+  background-color: alpha(@text, 0.15);
+}
+
+#backlight-slider highlight {
+  min-width: 8px;
+  border-radius: 999px;
+  background-color: @accent;
+}
+
+
+
+/* ════════ ВІДСТУПИ (однакові всюди) ════════
+   Кожна «бульбашка» має 10px усередині від косих країв,
+   кожен елемент усередині — по 7px з боків, тож між елементами рівно 14px. */
+#media,
+#hardware,
+#clock,
+#language,
+#tray,
+#connect {
+  padding: 0 10px;
+}
+
+/* мережа й Bluetooth: однакові кнопки-іконки */
+#custom-devices,
+#custom-clipboard,
+#custom-network,
+#custom-bluetooth {
+  font-size: 17px;
+  padding: 0 5px;          /* тісніше: з буфером обміну розгорнутий блок батареї не штовхає робочі столи */
+  min-width: 20px;
+}
+#custom-network.disconnected,
+#custom-bluetooth.off {
+  color: alpha(@text, 0.45);
+}
+#custom-bluetooth.connected {
+  color: @accent;
+}
+
+#clock,
+#language {
+  padding: 0 11px;
+}
+
+#pulseaudio,
+#custom-cava {
+  padding: 0 7px;
+}
+/* блок заліза — щільніше, щоб розгорнутий не заходив на робочі столи */
+#cpu,
+#memory,
+#disk,
+#temperature,
+#battery {
+  padding: 0 4px;
+}
+
+#custom-quicklink1,
+#custom-quicklink2,
+#custom-quicklink3,
+#custom-quicklink4,
+#custom-quicklink5,
+#custom-quicklink6,
+#custom-quicklink7,
+#custom-quicklink8,
+#custom-quicklink9,
+#custom-quicklink10 {
+  font-size: 1.5rem;
+  margin: 0 0.5rem;
+}
+
+/* трек і візуалізатор усередині бульбашки media */
+#mpris,
+#cava {
+  margin-right: 10px;
+}
+
+#mpris.paused {
+  color: alpha(@text, 0.6);
+}
+
+#cava,
+#custom-cava {
+  color: @accent;
+  font-size: 13px;         /* дрібніші смужки — не «цеглина», а хвилька */
+  letter-spacing: 1px;
+}
+
+/* звук і мікрофон сіріють ОКРЕМО (раніше сіріли обидва, бо клас source-muted є в обох модулях) */
+#pulseaudio:not(.mic).muted,
+#pulseaudio.mic.source-muted {
+  color: alpha(@text, 0.45);
+}
+
+/* мова — кнопка (клік перемикає розкладку) */
+#language:hover {
+  color: @accent;
+}
+
+/* плавні переходи кольору */
+#custom-clipboard, #custom-network, #custom-bluetooth, #pulseaudio, #language, #clock, #battery, #custom-notification, #custom-appmenu {
+  transition: color 220ms ease, background-color 220ms ease;
+}
+#custom-notification.notification,
+#custom-notification.dnd-notification {
+  color: @softpink;
+}
+
+/* значок меню і дзвіночок — однакові, по центру своєї бульбашки */
+#custom-appmenu,
+#custom-notification {
+  font-size: 19px;
+  min-width: 26px;
+  min-height: 32px;
+  padding: 0 12px;
+}
+
+#tray > widget {
+  padding: 0 1px;
+}
+
+#workspaces {
+  padding: 0 6px;
+}
+/* трохи правіше від центру. Запас перевірено: розгорнутий блок «залізо» праворуч їх не штовхає.
+   Якщо додаватимеш модулі праворуч — зменш це значення, інакше робочі столи знову «їздитимуть». */
+window#waybar .modules-center {
+  margin-left: 6px;
+}
+#custom-devices.busy { color: @accent; }
+
+#workspaces button {
+  min-width: 26px;
+  min-height: 32px;
+  margin: 0 1px;
+  padding: 0 4px;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+  color: alpha(@text, 0.4);
+  border-bottom: 3px solid transparent;
+}
+
+
+#workspaces button:hover {
+  color: @accent;
+  background: alpha(@accent, 0.15);
+  border-bottom-color: alpha(@accent, 0.6);
+}
+
+#workspaces button.active {
+  color: @softpink;
+  background: linear-gradient(to top, alpha(@softpink, 0.28), transparent);
+  border-bottom-color: @softpink;
+}
+
+#workspaces button.urgent {
+  color: @red;
+  border-bottom-color: @red;
+}
+
+
+
+#taskbar {
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* низький заряд: м'яке попередження замість синього фону, що блимав */
+@keyframes battlow {
+  from { color: @red; }
+  to   { color: alpha(@red, 0.45); }
+}
+#battery.warning:not(.charging) {
+  color: @peach;
+}
+#battery.critical:not(.charging) {
+  color: @red;
+  animation-name: battlow;
+  animation-duration: 1.1s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+
+#tray > .passive {
+  -gtk-icon-effect: dim;
+}
+
+#tray > .needs-attention {
+  -gtk-icon-effect: highlight;
+  background-color: @activeBg;
+}
+
+label:focus {
+  background-color: @activeBg;
+}
+
+#backlight {
+  margin-right: 8px;
+  background: none;
+}
+
+#temperature.critical {
+  color: @red;
+}
+
+/* наведення: стан :hover отримує контейнер модуля, тому «*:hover > #модуль» (а не «#модуль:hover») */
+/* дзвіночок — лише колір (без квадратного фону); значок Arch — без підсвітки */
+*:hover > #custom-notification,
+*:hover > #custom-appmenu {
+  color: @accent;
+}
+*:hover > #custom-devices, *:hover > #custom-clipboard, *:hover > #custom-network, *:hover > #custom-bluetooth, *:hover > #pulseaudio,
+*:hover > #clock, *:hover > #language, *:hover > #battery, *:hover > #cpu,
+*:hover > #memory, *:hover > #disk, *:hover > #temperature, *:hover > #custom-cava {
+  color: @accent;
+}
+
+/* логотип Arch: гліф візуально зміщений праворуч — трохи компенсуємо */
+#custom-appmenu {
+  padding: 0 14px 0 10px;
+}

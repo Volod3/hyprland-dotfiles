@@ -1,0 +1,236 @@
+
+
+@define-color rosewater #f5e0dc;
+@define-color flamingo  #f2cdcd;
+@define-color pink      #f5c2e7;
+@define-color mauve     #cba6f7;
+@define-color red       #f38ba8;
+@define-color maroon    #eba0ac;
+@define-color peach     #fab387;
+@define-color yellow    #f9e2af;
+@define-color green     #a6e3a1;
+@define-color teal      #94e2d5;
+@define-color sky       #89dceb;
+@define-color sapphire  #74c7ec;
+@define-color blue      #89b4fa;
+@define-color lavender  #b4befe;
+
+@define-color base    #1e1e2e;
+@define-color surface alpha(#11111b, 0.85);
+@define-color card    alpha(#181825, 0.92);
+@define-color text    #cdd6f4;
+@define-color subtext #a6adc8;
+@define-color hoverBg alpha(@mauve, 1);
+@define-color hoverFg #000000;
+@define-color shadow  alpha(@lavender, 0.25);
+
+* {
+  all: unset;
+  font-size: 1rem;
+  font-weight: 700;
+  font-family:
+    JetBrainsMonoNerdFont,
+    Font Awesome,
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  transition: all 200ms ease-in-out;
+}
+
+/* ---------- Загальне вікно центру сповіщень ---------- */
+.control-center {
+  background-color: @surface;
+  border: 1px solid @mauve;
+  border-radius: 20px;
+  padding: 12px;
+  box-shadow: 0px 0px 16px 4px @shadow;
+  margin: 8px;
+}
+
+.floating-notifications {
+  background: transparent;
+}
+
+/* ---------- Верхня панель центру сповіщень ---------- */
+.widget-title {
+  color: @text;
+  font-size: 1.1rem;
+  font-weight: 900;
+  padding: 8px 6px;
+}
+
+.widget-title > button {
+  background-color: @card;
+  color: @mauve;
+  border-radius: 999px;
+  padding: 6px 14px;
+  box-shadow: 0px 0px 6px 2px @shadow inset;
+}
+
+.widget-title > button:hover {
+  background-color: @hoverBg;
+  color: @hoverFg;
+}
+
+/* ---------- Кнопка "Do Not Disturb" ---------- */
+.widget-dnd {
+  padding: 8px 6px;
+  color: @text;
+}
+
+.widget-dnd > switch {
+  border-radius: 999px;
+  background-color: @card;
+  box-shadow: 0px 0px 6px 2px @shadow inset;
+  min-width: 44px;
+  min-height: 24px;
+}
+
+.widget-dnd > switch:checked {
+  background-color: @mauve;
+}
+
+.widget-dnd > switch slider {
+  background-color: @text;
+  border-radius: 999px;
+  margin: 2px;
+}
+
+/* ---------- Одне сповіщення (і в списку, і floating) ---------- */
+.notification-row {
+  outline: none;
+  margin: 6px 2px;
+}
+
+.notification-row:focus,
+.notification-row:hover {
+  opacity: 0.95;
+}
+
+.notification-background {
+  background: transparent;
+}
+
+.notification {
+  background-color: @card;
+  border-radius: 16px;
+  padding: 10px;
+  box-shadow: 0px 0px 10px 2px @shadow inset;
+  border: 1px solid alpha(@mauve, 0.35);
+}
+
+.notification-content {
+  padding: 4px;
+}
+
+.notification .summary {
+  color: @text;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.notification .body {
+  color: @subtext;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.notification .time {
+  color: @subtext;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.notification .close-button {
+  background-color: @card;
+  color: @red;
+  border-radius: 999px;
+  min-width: 22px;
+  min-height: 22px;
+}
+
+.notification .close-button:hover {
+  background-color: @red;
+  color: #000000;
+}
+
+.notification .image {
+  border-radius: 12px;
+}
+
+/* Кольорові акценти за терміновістю */
+.notification.critical {
+  border: 1px solid @red;
+}
+
+.notification.critical .summary {
+  color: @red;
+}
+
+.notification.low .summary {
+  color: @subtext;
+}
+
+/* ---------- Кнопки дій (Reply, Dismiss тощо) ---------- */
+.notification-action {
+  background-color: @card;
+  color: @text;
+  border-radius: 999px;
+  padding: 4px 12px;
+  margin: 4px 2px 0 0;
+  box-shadow: 0px 0px 4px 1px @shadow inset;
+}
+
+.notification-action:hover {
+  background-color: @hoverBg;
+  color: @hoverFg;
+}
+
+/* ---------- Плитки-віджети (mpris, backlight, volume...) ---------- */
+.widget-mpris,
+.widget-volume,
+.widget-backlight,
+.widget-buttons-grid {
+  background-color: @card;
+  border-radius: 16px;
+  padding: 8px;
+  margin: 6px 0;
+  box-shadow: 0px 0px 8px 2px @shadow inset;
+}
+
+.widget-mpris .widget-mpris-title {
+  color: @text;
+  font-weight: 900;
+}
+
+.widget-mpris .widget-mpris-subtitle {
+  color: @subtext;
+}
+
+/* ---------- "Очистити всі" ---------- */
+.widget-title > button.clear-all {
+  color: @peach;
+}
+
+/* ---------- Порожній стан ("No Notifications") ---------- */
+.no-notifications {
+  color: @subtext;
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 40px 0;
+}
+
+.no-notifications image {
+  -gtk-icon-effect: dim;
+}
+
+scrollbar {
+  background: transparent;
+}
+
+scrollbar slider {
+  background-color: alpha(@mauve, 0.5);
+  border-radius: 999px;
+  min-width: 6px;
+}

@@ -1,0 +1,552 @@
+#!/usr/bin/env python3
+"""powerd — живлення ноутбука: справжня «Економія», вибір відеокарти, захист батареї.
+
+  powerd watch          фоновий режим (автозапуск із hyprland.lua)
+  powerd apply          перечитати налаштування й застосувати (викликає usettings після змін)
+  powerd full-once      один раз зарядити до 100% (до відключення зарядки)
+  powerd status         стан у JSON (для «Налаштувань»)
+
+Економія (профіль power-saver) — що вмикається, обирається в Win+I → «Живлення та сон»:
+  екран 60 Гц, без розмиття й тіней, статичні шпалери, пет схований, модель Ollama вивантажена,
+  хвилька cava зупинена, без турбобусту процесора, підсвітка клавіатури вимкнена, обмеження яскравості,
+  програми — лише на вбудованій відеокарті.
+Після виходу з економії все повертається як було.
+Під час ігрового режиму (tools/gamemode) економія не втручається.
+
+Захист батареї: ліміт заряду (charge_control_end_threshold), за замовчуванням 80%
+(можна 60 / 90 / 100 у Win+I → Живлення). «Зарядити до 100% один раз» — до відключення зарядки.
+"""
+import fcntl
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import threading
+import time
+
+HOME = os.path.expanduser("~")
+QS = os.path.join(HOME, ".config/wallpapers_QS")
+SETTINGS = os.path.join(HOME, ".config/hypr/user-settings.json")
+GPU_LUA = os.path.join(HOME, ".config/hypr/gpu-env.lua")
+GPU_SH = os.path.join(HOME, ".cache/gpu-env.sh")
+ECO = os.path.join(HOME, ".cache/eco.json")
+BATT = os.path.join(HOME, ".cache/battery-guard.json")
+GAME = os.path.join(HOME, ".cache/gamemode.json")
+LOG = os.path.join(HOME, ".cache/powerd.log")
+LOCK = os.path.join(HOME, ".cache/.powerd.lock")
+PARALLAX = os.path.join(QS, "bg_parallax_MDRG/shell.qml")
+PET = os.path.join(QS, "bg_pet/shell.qml")
+NO_TURBO = "/sys/devices/system/cpu/intel_pstate/no_turbo"
+KBD = "asus::kbd_backlight"
+
+DEFAULTS = {
+    "gpu.apps": "auto",                 # auto | igpu | dgpu
+    "power.on_battery": "keep",         # keep | power-saver | balanced
+    "power.on_ac": "keep",              # keep | balanced | performance
+    "power.low_battery": 20,            # % — нижче цього від батареї вмикається економія (0 = ні)
+    "battery.limit": "80",
+    "power.critical_action": "suspend",  # на 3%: suspend (сон, щоб не втратити роботу) | none              # 60 | 80 | 90 | 100 (за замовчуванням 80 — запас на випадок відключень світла)
+    "eco.hz60": True, "eco.effects": True, "eco.static_wallpaper": True, "eco.hide_pet": True,
+    "eco.no_turbo": True, "eco.kbd_light": True, "eco.brightness": 0,
+}
+
+# змінні середовища для програм: як prime-run (dgpu) / лише Intel (igpu) / як без нічого (auto).
+# hl.env не вміє «прибрати» змінну, тому для auto — значення, що поводяться як за замовчуванням.
+GLVND = "/usr/share/glvnd/egl_vendor.d/"
+ICD = "/usr/share/vulkan/icd.d/"
+GPU_ENV = {
+    "auto": {"__NV_PRIME_RENDER_OFFLOAD": "0", "__NV_PRIME_RENDER_OFFLOAD_PROVIDER": "",
+             "__GLX_VENDOR_LIBRARY_NAME": "mesa", "__VK_LAYER_NV_optimus": "",
+             "__EGL_VENDOR_LIBRARY_FILENAMES": GLVND + "10_nvidia.json:" + GLVND + "50_mesa.json",
+             "VK_DRIVER_FILES": ICD + "intel_icd.json:" + ICD + "nvidia_icd.json"},
+    "igpu": {"__NV_PRIME_RENDER_OFFLOAD": "0", "__NV_PRIME_RENDER_OFFLOAD_PROVIDER": "",
+             "__GLX_VENDOR_LIBRARY_NAME": "mesa", "__VK_LAYER_NV_optimus": "non_NVIDIA_only",
+             "__EGL_VENDOR_LIBRARY_FILENAMES": GLVND + "50_mesa.json",
+             "VK_DRIVER_FILES": ICD + "intel_icd.json"},
+    "dgpu": {"__NV_PRIME_RENDER_OFFLOAD": "1", "__NV_PRIME_RENDER_OFFLOAD_PROVIDER": "NVIDIA-G0",
+             "__GLX_VENDOR_LIBRARY_NAME": "nvidia", "__VK_LAYER_NV_optimus": "NVIDIA_only",
+             "__EGL_VENDOR_LIBRARY_FILENAMES": GLVND + "10_nvidia.json:" + GLVND + "50_mesa.json",
+             "VK_DRIVER_FILES": ICD + "nvidia_icd.json:" + ICD + "intel_icd.json"},
+}
+
+
+def osd_event(kind, title, sub):
+    """Спливаюче віконце (bg_osd), як у KDE."""
+    subprocess.Popen(["qs", "-p", os.path.join(QS, "bg_osd/shell.qml"), "ipc", "call", "osd", "event", kind, title, sub],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def log(msg):
+    try:
+        with open(LOG, "a") as f:
+            f.write(time.strftime("%F %T ") + msg + "\n")
+    except OSError:
+        pass
+
+
+def sh(cmd, timeout=6, data=None):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, input=data).stdout
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def spawn(cmd):
+    subprocess.Popen(["setsid", "-f"] + cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def jload(p, d=None):
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {} if d is None else d
+
+
+def jsave(p, d):
+    tmp = p + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=1, ensure_ascii=False)
+    os.replace(tmp, p)
+
+
+def read(p, d=""):
+    try:
+        with open(p) as f:
+            return f.read().strip()
+    except OSError:
+        return d
+
+
+def write(p, v):
+    try:
+        with open(p, "w") as f:
+            f.write(str(v))
+        return True
+    except OSError:
+        return False
+
+
+class Locked:
+    def __enter__(self):
+        self.f = open(LOCK, "w")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+
+    def __exit__(self, *a):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
+def cfg(k):
+    return jload(SETTINGS).get(k, DEFAULTS[k])
+
+
+# ── стан системи ──
+def profile():
+    out = sh(["busctl", "get-property", "org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles",
+              "org.freedesktop.UPower.PowerProfiles", "ActiveProfile"])
+    m = re.search(r'"([\w-]+)"', out)
+    return m.group(1) if m else ""
+
+
+def set_profile(p):
+    sh(["powerprofilesctl", "set", p])
+
+
+def bat_dir():
+    for n in sorted(os.listdir("/sys/class/power_supply")):
+        if n.startswith("BAT"):
+            return "/sys/class/power_supply/" + n
+    return ""
+
+
+def on_ac():
+    for n in ("ACAD", "AC", "ADP1", "AC0"):
+        v = read(f"/sys/class/power_supply/{n}/online")
+        if v:
+            return v == "1"
+    return True
+
+
+def capacity():
+    try:
+        return int(read(bat_dir() + "/capacity", "100"))
+    except ValueError:
+        return 100
+
+
+def game_active():
+    return bool(jload(GAME).get("active"))
+
+
+def hypr_get(name):
+    try:
+        j = json.loads(sh(["hyprctl", "getoption", name, "-j"]))
+        for k in ("bool", "int", "float", "str"):
+            if k in j:
+                return j[k]
+    except ValueError:
+        pass
+    return None
+
+
+def hypr_set(name, value):
+    parts = name.split(":")
+    lua_val = "true" if value in (1, True, "1", "true") else "false"
+    sh(["hyprctl", "eval", "hl.config(%s)" % ("".join('{["%s"]=' % p for p in parts) + lua_val + "}" * len(parts))])
+
+
+def monitor():
+    try:
+        m = json.loads(sh(["hyprctl", "monitors", "-j"]))[0]
+        return m
+    except (ValueError, IndexError):
+        return None
+
+
+def set_mode(name, mode, scale):
+    sh(["hyprctl", "eval", 'hl.monitor({ output = "%s", mode = "%s", position = "auto", scale = "%s" })' % (name, mode, scale)])
+
+
+def qs_running(path):
+    return bool(sh(["pgrep", "-f", "^qs -p " + re.escape(path) + "$"]).split())
+
+
+def qs_kill(path):
+    sh(["pkill", "-f", "^qs -p " + re.escape(path) + "$"])
+
+
+def brightness():
+    try:
+        return int(sh(["brightnessctl", "-m"]).split(",")[3].rstrip("%"))
+    except (IndexError, ValueError):
+        return 0
+
+
+# ── відеокарта для програм ──
+def gpu_mode():
+    return "igpu" if jload(ECO).get("active") else cfg("gpu.apps")
+
+
+def gpu_apply():
+    mode = gpu_mode()
+    env = GPU_ENV.get(mode, GPU_ENV["auto"])
+    lua = ["-- Згенеровано tools/powerd (Win+I → Живлення → Відеокарта). Перезаписується.",
+           "-- Режим: " + mode]
+    shl = ["# Згенеровано tools/powerd. Режим: " + mode]
+    for k, v in env.items():
+        lua.append('hl.env("%s", "%s")' % (k, v))
+        shl.append("export %s='%s'" % (k, v) if v else "unset %s" % k)
+    if read(GPU_LUA) != "\n".join(lua):
+        write(GPU_LUA, "\n".join(lua) + "\n")
+    write(GPU_SH, "\n".join(shl) + "\n")
+    for k, v in env.items():
+        sh(["hyprctl", "eval", 'hl.env("%s", "%s")' % (k, v)])
+    sh(["systemctl", "--user", "set-environment"] + ["%s=%s" % kv for kv in env.items() if kv[1]])
+    empty = [k for k, v in env.items() if not v]
+    if empty:
+        sh(["systemctl", "--user", "unset-environment"] + empty)
+
+
+# ── економія ──
+def eco_on():
+    st = jload(ECO)
+    if st.get("active"):
+        return
+    mon = monitor()
+    st = {"active": True, "since": time.time(),
+          "blur": hypr_get("decoration:blur:enabled"), "shadow": hypr_get("decoration:shadow:enabled"),
+          "mode": "%dx%d@%.3f" % (mon["width"], mon["height"], mon["refreshRate"]) if mon else "",
+          "monitor": mon["name"] if mon else "", "scale": mon["scale"] if mon else 1,
+          "parallax": False, "pet": False, "turbo": None, "kbd": None, "bright": None}
+    if cfg("eco.effects"):
+        hypr_set("decoration:blur:enabled", False)
+        hypr_set("decoration:shadow:enabled", False)
+    hypr_set("misc:vfr", True)
+    if cfg("eco.hz60") and mon and mon["refreshRate"] > 61:
+        set_mode(mon["name"], "%dx%d@60" % (mon["width"], mon["height"]), mon["scale"])
+    if cfg("eco.static_wallpaper") and qs_running(PARALLAX):
+        st["parallax"] = True
+        qs_kill(PARALLAX)
+        if not sh(["pgrep", "-x", "hyprpaper"]).strip():
+            spawn(["hyprpaper"])
+    if cfg("eco.hide_pet") and qs_running(PET):
+        st["pet"] = True
+        qs_kill(PET)
+    if cfg("eco.no_turbo") and read(NO_TURBO) == "0":
+        if write(NO_TURBO, 1):
+            st["turbo"] = True
+    if cfg("eco.kbd_light"):
+        cur = sh(["brightnessctl", "-d", KBD, "get"]).strip()
+        if cur.isdigit() and int(cur) > 0:
+            st["kbd"] = int(cur)
+            sh(["brightnessctl", "-d", KBD, "-q", "set", "0"])
+    cap = int(cfg("eco.brightness") or 0)
+    if cap > 0:
+        b = brightness()
+        if b > cap:
+            st["bright"] = b
+            sh(["brightnessctl", "-q", "set", "%d%%" % cap])
+    jsave(ECO, st)
+    sh(["pkill", "-f", "cava -p .*/waybar-cava.conf"])          # waybar перезапустить cava.sh — той побачить eco й засне
+    for line in sh(["ollama", "ps"]).splitlines()[1:]:
+        if line.split():
+            sh(["ollama", "stop", line.split()[0]], timeout=10)
+    sh([os.path.join(QS, "tools/gamemode"), "dropcache"])
+    gpu_apply()
+    osd_event("eco", "Економія", "60 Гц · без ефектів · без турбобусту")
+    log("ECO ON")
+
+
+def eco_reapply_hypr():
+    """Після перезавантаження конфігу Hyprland повертає блюр і 144 Гц — знову прибираємо."""
+    if not jload(ECO).get("active"):
+        return
+    if cfg("eco.effects"):
+        hypr_set("decoration:blur:enabled", False)
+        hypr_set("decoration:shadow:enabled", False)
+    mon = monitor()
+    if cfg("eco.hz60") and mon and mon["refreshRate"] > 61:
+        set_mode(mon["name"], "%dx%d@60" % (mon["width"], mon["height"]), mon["scale"])
+
+
+def eco_off():
+    st = jload(ECO)
+    if not st.get("active"):
+        return
+    jsave(ECO, {"active": False})
+    if st.get("blur") is not None:
+        hypr_set("decoration:blur:enabled", st["blur"])
+    if st.get("shadow") is not None:
+        hypr_set("decoration:shadow:enabled", st["shadow"])
+    mon = monitor()
+    if st.get("mode") and mon:
+        set_mode(mon["name"], st["mode"], mon["scale"])
+    if st.get("turbo"):
+        write(NO_TURBO, 0)
+    if st.get("kbd"):
+        sh(["brightnessctl", "-d", KBD, "-q", "set", str(st["kbd"])])
+    if st.get("bright"):
+        sh(["brightnessctl", "-q", "set", "%d%%" % st["bright"]])
+    if st.get("parallax") and not qs_running(PARALLAX):
+        sh(["pkill", "-x", "hyprpaper"])
+        spawn(["qs", "-p", PARALLAX])
+    if st.get("pet") and not qs_running(PET):
+        spawn(["qs", "-p", PET])
+    sh(["pkill", "-f", "cava -p .*/waybar-cava.conf"])          # хвилька повернеться за кілька секунд
+    gpu_apply()
+    log("ECO OFF")
+
+
+def sync_profile(p=None):
+    if game_active():
+        return
+    p = p or profile()
+    if not p:
+        return
+    with Locked():
+        if p == "power-saver":
+            eco_on()
+        else:
+            eco_off()
+
+
+# ── захист батареї ──
+def batt_target(bs):
+    if bs.get("full_once"):
+        return 100
+    lim = str(cfg("battery.limit"))
+    if lim.isdigit():
+        return max(20, min(100, int(lim)))
+    return 80                         # «auto» зі старих налаштувань = 80 (60 — замало, коли бувають відключення)
+
+
+def batt_apply(bs):
+    p = bat_dir() + "/charge_control_end_threshold"
+    if not os.path.exists(p):
+        return
+    want = batt_target(bs)
+    bs["target"] = want
+    if read(p) != str(want):
+        if write(p, want):
+            log("ліміт заряду → %d%%" % want)
+        else:
+            bs["error"] = "немає прав на запис " + p
+            return
+    bs.pop("error", None)
+
+
+# ── періодична перевірка: зарядка / батарея ──
+def tick(bs, dt):
+    ac = on_ac()
+    # статистика «скільки часу на зарядці» з повільним згасанням (~3 дні)
+    decay = 0.5 ** (dt / (3 * 86400))
+    bs["ac_s"] = bs.get("ac_s", 0) * decay + (dt if ac else 0)
+    bs["bat_s"] = bs.get("bat_s", 0) * decay + (0 if ac else dt)
+    was = bs.get("ac")
+    if was is not None and was != ac:
+        log("зарядка " + ("підключена" if ac else "відключена"))
+        if not ac and bs.get("full_once"):
+            bs["full_once"] = False                 # «один раз до 100%» — до відключення зарядки
+        want = cfg("power.on_ac" if ac else "power.on_battery")
+        if want != "keep" and not game_active():
+            set_profile(want)
+        bs["low_done"] = False
+    bs["ac"] = ac
+    battery_alerts(bs, ac)
+    low = int(cfg("power.low_battery") or 0)
+    if not ac and low > 0 and capacity() <= low and not bs.get("low_done") and not game_active():
+        bs["low_done"] = True
+        if profile() != "power-saver":
+            set_profile("power-saver")
+            sh(["notify-send", "-u", "normal", "-a", "Живлення", "-i", "battery-caution", "Батарея %d%%" % capacity(),
+                "Увімкнено економію. Повернути: клік по батареї → «Баланс»"])
+    batt_apply(bs)
+
+
+def notify(urgency, icon, title, body):
+    sh(["notify-send", "-u", urgency, "-a", "Батарея", "-i", icon, title, body])
+
+
+def battery_alerts(bs, ac):
+    """Сповіщення як у KDE: 20% / 10% / 5% / 3% (дія), «заряджено до ліміту»."""
+    cap = capacity()
+    status = read(bat_dir() + "/status")
+    if ac:
+        bs["alert"] = 100                       # на зарядці — скинути, щоб наступного разу спрацювало знову
+        lim = batt_target(bs)
+        if status in ("Not charging", "Full") or cap >= lim:
+            if not bs.get("full_notified"):
+                bs["full_notified"] = True
+                notify("low", "battery-full-charged", "Заряджено до %d%%" % cap,
+                       "ліміт %d%% береже батарею — можна від'єднати зарядку" % lim if lim < 100 else "можна від'єднати зарядку")
+                osd_event("battery", "Заряджено до %d%%" % cap, "можна від'єднати зарядку")
+        else:
+            bs["full_notified"] = False
+        return
+    bs["full_notified"] = False
+    last = bs.get("alert", 100)                 # найнижчий рівень, про який уже повідомили
+    for lvl, urg, icon, title, body in (
+            (3, "critical", "battery-empty", "Заряд %d%% — переводжу в сон", "щоб не втратити роботу. Підключи зарядку"),
+            (5, "critical", "battery-caution", "Заряд %d%% — ноутбук скоро вимкнеться", "підключи зарядку зараз"),
+            (10, "critical", "battery-caution", "Критично низький заряд: %d%%", "підключи зарядку"),
+            (20, "normal", "battery-low", "Низький заряд: %d%%", "варто підключити зарядку")):
+        if cap <= lvl and last > lvl:
+            bs["alert"] = lvl
+            notify(urg, icon, title % cap, body)
+            osd_event("error" if lvl <= 10 else "battery", title % cap, body)
+            if lvl == 3 and cfg("power.critical_action") == "suspend" and not game_active():
+                log("критичний заряд %d%% — сон" % cap)
+                time.sleep(8)                     # дати побачити повідомлення
+                if not on_ac():
+                    sh(["systemctl", "suspend"])
+            break
+
+
+def apply_all():
+    with Locked():
+        bs = jload(BATT)
+        batt_apply(bs)
+        jsave(BATT, bs)
+        gpu_apply()
+        if jload(ECO).get("active"):
+            eco_reapply_hypr()
+    sync_profile()
+
+
+def profile_monitor():
+    """Миттєва реакція на зміну профілю (з будь-якого місця: waybar, Win+I, powerprofilesctl)."""
+    while True:
+        try:
+            p = subprocess.Popen(["gdbus", "monitor", "--system", "--dest", "org.freedesktop.UPower.PowerProfiles",
+                                  "--object-path", "/org/freedesktop/UPower/PowerProfiles"],
+                                 stdout=subprocess.PIPE, text=True)
+            for line in p.stdout:
+                if "ActiveProfile" in line:
+                    m = re.search(r"'ActiveProfile': <'([\w-]+)'>", line)
+                    time.sleep(0.3)
+                    p = m.group(1) if m else profile()
+                    if p and p != "power-saver" and not game_active():
+                        osd_event("info", "Режим живлення: " + {"balanced": "Баланс", "performance": "Потужність"}.get(p, p), "")
+                    sync_profile(p)
+        except Exception as e:  # noqa: BLE001
+            log(f"profile_monitor: {e}")
+        time.sleep(3)
+
+
+def hypr_monitor():
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    rt = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    while True:
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.connect(f"{rt}/hypr/{sig}/.socket2.sock")
+            buf = b""
+            while True:
+                data = s.recv(4096)
+                if not data:
+                    break
+                buf += data
+                *lines, buf = buf.split(b"\n")
+                if any(l.startswith(b"configreloaded>>") for l in lines):
+                    time.sleep(0.5)
+                    with Locked():
+                        eco_reapply_hypr()
+        except OSError as e:
+            log(f"hypr_monitor: {e}")
+        time.sleep(3)
+
+
+def watch():
+    log("старт")
+    apply_all()
+    threading.Thread(target=profile_monitor, daemon=True).start()
+    threading.Thread(target=hypr_monitor, daemon=True).start()
+    last = time.monotonic()
+    while True:
+        time.sleep(20 if capacity() > 12 or on_ac() else 8)
+        now = time.monotonic()
+        with Locked():
+            bs = jload(BATT)
+            tick(bs, min(now - last, 120))
+            jsave(BATT, bs)
+        last = now
+
+
+def status():
+    bs = jload(BATT)
+    d = bat_dir()
+    try:
+        health = round(100 * int(read(d + "/charge_full", "0")) / int(read(d + "/charge_full_design", "1")))
+    except (ValueError, ZeroDivisionError):
+        health = 0
+    tot = bs.get("ac_s", 0) + bs.get("bat_s", 0)
+    print(json.dumps({
+        "limit": read(d + "/charge_control_end_threshold"), "target": batt_target(bs), "full_once": bool(bs.get("full_once")),
+        "error": bs.get("error", ""), "health": health, "cycles": read(d + "/cycle_count"),
+        "ac_share": round(100 * bs.get("ac_s", 0) / tot) if tot else None,
+        "eco": bool(jload(ECO).get("active")), "gpu": gpu_mode(), "profile": profile(),
+    }, ensure_ascii=False))
+
+
+def main():
+    a = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if a == "watch":
+        watch()
+    elif a == "apply":
+        apply_all()
+    elif a == "full-once":
+        with Locked():
+            bs = jload(BATT)
+            bs["full_once"] = not bs.get("full_once")
+            batt_apply(bs)
+            jsave(BATT, bs)
+        status()
+    else:
+        status()
+
+
+if __name__ == "__main__":
+    main()

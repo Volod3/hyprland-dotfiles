@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Запускає Quickshell-шпалери тієї теми, яка збережена у state/current.
+# Використовується з автозапуску Hyprland, тому нічого не перезапускає.
+set -uo pipefail
+BASE="${XDG_CONFIG_HOME:-$HOME/.config}/theme-switch"
+UID_="$(id -u)"
+id="$(cat "$BASE/state/current" 2>/dev/null || echo madara)"
+case "$id" in
+  azure) dir="$HOME/.config/wallpapers_QS/bg_parallax_TEST_3" ;;
+  *)     dir="$HOME/.config/wallpapers_QS/bg_parallax_MDRG" ;;
+esac
+
+# Паралакс рухається за курсором через `hyprctl cursorpos` усередині shell.qml.
+# Без цих змінних hyprctl не бачить інстанс і шари стоять на місці.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID_}"
+if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+  for d in /run/user/"$UID_"/hypr/*/; do
+    [ -S "$d/.socket.sock" ] || continue
+    s="$(basename "$d")"
+    if HYPRLAND_INSTANCE_SIGNATURE="$s" XDG_RUNTIME_DIR="/run/user/$UID_" \
+        hyprctl cursorpos >/dev/null 2>&1; then
+      export HYPRLAND_INSTANCE_SIGNATURE="$s"; break
+    fi
+  done
+fi
+
+exec qs -p "$dir/shell.qml"

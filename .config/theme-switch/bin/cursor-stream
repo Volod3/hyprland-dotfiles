@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""cursor-stream — швидкий потік позиції курсора для паралаксу.
+
+Один процес, без `sh`-циклу: опитує `hyprctl cursorpos` і друкує лише зміни
+у форматі "x,y". Використовується в Parallax.qml (Process + SplitParser).
+"""
+import os
+import re
+import subprocess
+import sys
+import time
+
+PAT = re.compile(r"^\s*(-?\d+)\s*,\s*(-?\d+)")
+INTERVAL = 0.018  # ~55 Гц запитів; hyprctl сам по собі ~6 мс
+
+last = None
+fails = 0
+MAX_FAILS = 200   # ~40 с без успішного відліку -> виходимо
+
+
+def parent_alive():
+    """Батько — це qs. Якщо ні (напр., усиновлено systemd --user), виходимо."""
+    try:
+        with open(f"/proc/{os.getppid()}/comm", encoding="utf-8") as f:
+            return "qs" in f.read()
+    except Exception:
+        return False
+
+
+while True:
+    if not parent_alive():
+        break
+    try:
+        out = subprocess.run(
+            ["hyprctl", "cursorpos"], capture_output=True, text=True, timeout=1
+        ).stdout
+        m = PAT.match(out or "")
+        if not m:
+            fails += 1
+            if fails == 1:
+                print("ERR", flush=True)
+            if fails > MAX_FAILS:
+                print("ERR", flush=True)
+                break
+            time.sleep(0.2)
+            continue
+        fails = 0
+        x, y = int(m.group(1)), int(m.group(2))
+        if last != (x, y):
+            last = (x, y)
+            print(f"{x},{y}", flush=True)
+    except Exception:
+        try:
+            print("ERR", flush=True)
+        except Exception:
+            pass
+        time.sleep(0.25)
+        continue
+    time.sleep(INTERVAL)

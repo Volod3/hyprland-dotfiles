@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""pet-web — інтернет для пета (Ollama): пошук і читання сторінок.
+
+  pet-web search "запит"     до 5 результатів (Brave, запасний DuckDuckGo): назва, адреса, короткий опис
+  pet-web read URL           текст сторінки (без меню/скриптів), до ~3000 символів
+
+Відповідь — простий текст, коротко, щоб влізти в контекст маленької моделі.
+Пошук: Brave Search (запасний — DuckDuckGo), без ключів і без входу в акаунт.
+"""
+import base64
+import html
+import json
+import os
+import time
+import re
+import subprocess
+from html.parser import HTMLParser
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+MAX_PAGE = 3000
+
+
+def fetch(url, data=None, timeout=12):
+    """Завантаження через curl: на запити Python (urllib) Brave відповідає 429, а Bing — випадковим сміттям."""
+    cmd = ["curl", "-sL", "--compressed", "-m", str(timeout), "-A", UA,
+           "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+           "-H", "Accept-Language: uk,en;q=0.8", "-w", "\n%{http_code} %{content_type}"]
+    if data is not None:
+        cmd += ["--data-binary", data.decode() if isinstance(data, bytes) else data]
+    r = subprocess.run(cmd + [url], capture_output=True, timeout=timeout + 3)
+    raw, _, tail = r.stdout.rpartition(b"\n")
+    code, _, ctype = tail.decode(errors="ignore").partition(" ")
+    if not code.isdigit() or int(code) >= 400:
+        raise urllib.error.HTTPError(url, int(code) if code.isdigit() else 0, "HTTP " + code, None, None)
+    m = re.search(r"charset=([\w-]+)", ctype)
+    try:
+        return raw.decode(m.group(1) if m else "utf-8", errors="replace"), ctype
+    except LookupError:
+        return raw.decode("utf-8", errors="replace"), ctype
+
+def strip(s):
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", s))).strip()
+
+
+def real_url(href):
+    href = html.unescape(href)
+    if href.startswith("//"):
+        href = "https:" + href
+    q = urllib.parse.urlparse(href)
+    if "duckduckgo.com" in q.netloc and q.path.startswith("/l/"):
+        u = urllib.parse.parse_qs(q.query).get("uddg")
+        if u:
+            return u[0]
+    return href
+
+
+def bing_url(href):
+    """Bing загортає посилання в /ck/a?...&u=a1<base64>."""
+    href = html.unescape(href)
+    q = urllib.parse.urlparse(href)
+    if "bing.com" in q.netloc and q.path.startswith("/ck/"):
+        u = urllib.parse.parse_qs(q.query).get("u", [""])[0]
+        if u.startswith("a1"):
+            try:
+                b = u[2:]
+                return base64.urlsafe_b64decode(b + "=" * (-len(b) % 4)).decode()
+            except ValueError:
+                pass
+    return href
+
+
+def search_bing(query):
+    body, _ = fetch("https://www.bing.com/search?" + urllib.parse.urlencode({"q": query, "setlang": "uk", "cc": "UA"}))
+    out = []
+    for b in re.split(r'<li class="b_algo"', body)[1:]:
+        a = re.search(r"<h2[^>]*>\s*<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", b, re.S)
+        if not a:
+            continue
+        snip = re.search(r'<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>(.*?)</p>', b, re.S) or re.search(r"<p[^>]*>(.*?)</p>", b, re.S)
+        out.append((strip(a.group(2)), bing_url(a.group(1)), strip(snip.group(1))[:260] if snip else ""))
+        if len(out) >= 5:
+            break
+    return out
+
+
+def search_brave(query):
+    body, _ = fetch("https://search.brave.com/search?" + urllib.parse.urlencode({"q": query, "source": "web"}))
+    out = []
+    for b in re.split(r'<div class="snippet\b[^"]*"[^>]*data-type="web"', body)[1:]:
+        t = re.search(r'class="title[^"]*"[^>]*>(.*?)</div>', b, re.S)
+        if not t:
+            continue
+        go = re.search(r'href="(/go/[^"]+|https?://[^"]+)"', b)
+        cite = re.search(r'<cite[^>]*>(.*?)</cite>', b, re.S)
+        url = ""
+        if cite:                                    # «https://bank.gov.ua › ua › markets» → пряма адреса
+            c = strip(cite.group(1))
+            if "…" not in c and "..." not in c:
+                url = re.sub(r"\s*›\s*", "/", c).replace(" ", "")
+        if not url and go:
+            url = go.group(1) if go.group(1).startswith("http") else "https://search.brave.com" + go.group(1)
+        d = re.search(r'class="(?:snippet-description|generic-snippet)[^"]*"[^>]*>(.*?)</div>', b, re.S)
+        out.append((strip(t.group(1)), html.unescape(url), strip(d.group(1))[:260] if d else ""))
+        if len(out) >= 5:
+            break
+    return out
+
+
+def search_ddg(query):
+    body, _ = fetch("https://html.duckduckgo.com/html/", data=urllib.parse.urlencode({"q": query, "kl": "ua-uk"}).encode())
+    out = []
+    for b in re.split(r'<div class="result results_links', body)[1:]:
+        a = re.search(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', b, re.S)
+        if not a or "result--ad" in b[:200]:
+            continue
+        snip = re.search(r'class="result__snippet"[^>]*>(.*?)</a>', b, re.S)
+        out.append((strip(a.group(2)), real_url(a.group(1)), strip(snip.group(1))[:260] if snip else ""))
+        if len(out) >= 5:
+            break
+    return out
+
+
+CACHE = os.path.join(os.path.expanduser("~"), ".cache/pet-web")
+KEY_FILE = os.path.join(os.path.expanduser("~"), ".config/wallpapers_QS/bg_pet/brave-api-key")
+
+
+def relevant(query, res):
+    """Чи стосуються результати запиту: усі «моделі/артикули» (слова з цифрами) мають бути в тексті,
+    і хоча б половина інших слів. Bing інколи віддає випадкові сторінки — так їх відсіюємо."""
+    text = " ".join(t + " " + sn + " " + u for t, u, sn in res).lower()
+    words = re.findall(r"\w{3,}", query.lower())
+    codes = [w for w in words if re.search(r"\d", w)]
+    if any(c not in text for c in codes):
+        return False
+    other = [w for w in words if w not in codes and len(w) >= 4]
+    return not other or sum(1 for w in other if w[:5] in text) >= max(1, len(other) // 2)
+
+
+def search_brave_api(query):
+    """Офіційний Brave Search API (безкоштовний ключ: https://brave.com/search/api/) — найнадійніше."""
+    if not os.path.exists(KEY_FILE):
+        return []
+    key = open(KEY_FILE).read().strip()
+    url = "https://api.search.brave.com/res/v1/web/search?" + urllib.parse.urlencode({"q": query, "count": 5})
+    r = subprocess.run(["curl", "-s", "--compressed", "-m", "12", "-H", "Accept: application/json",
+                        "-H", "X-Subscription-Token: " + key, url], capture_output=True, timeout=15)
+    j = json.loads(r.stdout or b"{}")
+    return [(strip(x.get("title", "")), x.get("url", ""), strip(x.get("description", ""))[:260])
+            for x in (j.get("web") or {}).get("results", [])[:5]]
+
+
+def search_wiki(query):
+    """Відкрите API Вікіпедії (uk, потім en) — останній запасний варіант."""
+    out = []
+    for lang in ("uk", "en"):
+        url = "https://%s.wikipedia.org/w/api.php?" % lang + urllib.parse.urlencode(
+            {"action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": 3})
+        r = subprocess.run(["curl", "-s", "-m", "10", "-A", "desktop-pet/1.0 (personal use)", url], capture_output=True, timeout=12)
+        for x in (json.loads(r.stdout or b"{}").get("query") or {}).get("search", []):
+            out.append((x["title"], "https://%s.wikipedia.org/wiki/%s" % (lang, urllib.parse.quote(x["title"].replace(" ", "_"))),
+                        strip(x.get("snippet", ""))[:260]))
+        if out:
+            break
+    return out
+
+
+def cached(query):
+    try:
+        f = os.path.join(CACHE, re.sub(r"\W+", "_", query.lower())[:80] + ".txt")
+        if time.time() - os.path.getmtime(f) < 6 * 3600:
+            return open(f).read()
+    except OSError:
+        pass
+    return None
+
+
+def remember(query, text):
+    os.makedirs(CACHE, exist_ok=True)
+    with open(os.path.join(CACHE, re.sub(r"\W+", "_", query.lower())[:80] + ".txt"), "w") as f:
+        f.write(text)
+
+
+def brave_blocked():
+    try:
+        return time.time() < float(open(os.path.join(CACHE, ".brave-blocked")).read())
+    except (OSError, ValueError):
+        return False
+
+
+def search(query):
+    hit = cached(query)
+    if hit:
+        return hit
+    res = []
+    for engine in (search_brave_api, search_brave, search_ddg, search_bing, search_wiki):
+        if engine is search_brave and brave_blocked():
+            continue
+        try:
+            res = engine(query)
+        except urllib.error.HTTPError as e:
+            res = []
+            if engine is search_brave and e.code == 429:      # обмеження частоти — 5 хв не чіпаємо
+                os.makedirs(CACHE, exist_ok=True)
+                open(os.path.join(CACHE, ".brave-blocked"), "w").write(str(time.time() + 300))
+        except Exception:  # noqa: BLE001
+            res = []
+        if res and (engine in (search_brave_api, search_wiki) or relevant(query, res)):
+            break
+        res = []
+    if not res:
+        return ("Нічого не знайдено: пошукові сайти зараз не відповідають (обмеження частоти). "
+                "Скажи користувачу, що пошук тимчасово недоступний, а не що такої речі не існує.")
+    out = "\n".join("%d. %s\n   %s\n   %s" % (i + 1, t, u, sn) for i, (t, u, sn) in enumerate(res))
+    # маленька модель рідко сама відкриває сторінку й вигадує числа — додаємо потрібні рядки з першого результату
+    stems = [w[:5] for w in re.findall(r"\w{4,}", query.lower())]
+    for _, url, _ in res[:2]:
+        try:
+            page = read(url, limit=20000)
+        except Exception:  # noqa: BLE001
+            continue
+        lines = [l for l in page.split("\n")[1:] if sum(1 for st in stems if st in l.lower()) >= 1]
+        excerpt = "\n".join(lines)[:1200]
+        if len(excerpt) > 80:
+            host = urllib.parse.urlparse(url).netloc or url
+            out += "\n\nРядки зі сторінки %s (бери числа й факти звідси):\n%s" % (host, excerpt)
+            break
+    remember(query, out)
+    return out
+
+
+class Text(HTMLParser):
+    SKIP = {"script", "style", "noscript", "svg", "nav", "footer", "header", "form", "aside", "button", "template", "sup"}
+    BLOCK = {"p", "div", "li", "h1", "h2", "h3", "h4", "tr", "br", "section", "article", "table", "dt", "dd"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.skip = 0
+        self.parts = []
+        self.title = ""
+        self.in_title = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self.skip += 1
+        elif tag == "title":
+            self.in_title = True
+        elif tag in ("td", "th"):
+            self.parts.append(" | ")             # клітинки таблиці — в один рядок
+        elif tag in self.BLOCK:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP and self.skip:
+            self.skip -= 1
+        elif tag == "title":
+            self.in_title = False
+
+    def handle_data(self, data):
+        if self.in_title:
+            self.title += data
+        elif not self.skip:
+            self.parts.append(re.sub(r"\s+", " ", data))    # переноси в HTML — не переноси в тексті
+
+
+def read(url, limit=MAX_PAGE):
+    if not re.match(r"^https?://", url):
+        url = "https://" + url
+    body, ctype = fetch(url)
+    if "html" not in ctype and "<html" not in body[:2000].lower():
+        return body[:limit]
+    p = Text()                      # уся сторінка; меню/шапка/підвал відкидаються самим парсером (SKIP)
+    p.feed(body)
+    t = p
+    lines = [re.sub(r"[ \t\xa0]+", " ", x).strip() for x in "".join(p.parts).split("\n")]
+    seen, keep = set(), []
+    for x in lines:                                         # прибрати дрібні шматки меню й повтори,
+        x = x.strip(" |")                                   # але лишити рядки з числами (таблиці, ціни)
+        if (len(x) > 30 or (re.search(r"\d", x) and len(x) > 3)) and x not in seen:
+            seen.add(x)
+            keep.append(x)
+    text = "\n".join(keep)
+    return (t.title.strip() + "\n" if t.title.strip() else "") + text[:limit]
+
+
+def main():
+    if len(sys.argv) < 3 or sys.argv[1] not in ("search", "read"):
+        print(__doc__)
+        return
+    arg = " ".join(sys.argv[2:]).strip()
+    try:
+        print(search(arg) if sys.argv[1] == "search" else read(arg))
+    except Exception as e:  # noqa: BLE001
+        print("Помилка мережі: %s" % e)
+
+
+if __name__ == "__main__":
+    main()

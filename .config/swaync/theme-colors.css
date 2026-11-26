@@ -1,0 +1,12 @@
+/* Згенеровано tools/theme — кольори поточної теми. */
+@define-color accent  #9ec4ff;
+@define-color pink    #c4b0ff;
+@define-color surface alpha(#0b1020, 0.90);
+@define-color card    alpha(mix(#0b1020, #ffffff, 0.06), 0.94);
+@define-color text    #e6ecfa;
+@define-color subtext #8e9bb8;
+@define-color hoverBg alpha(@accent, 0.22);
+@define-color hoverFg @text;
+@define-color shadow  alpha(black, 0.35);
+@define-color danger  #ff9aa8;
+@define-color border  alpha(#b8c8ff, 0.16);

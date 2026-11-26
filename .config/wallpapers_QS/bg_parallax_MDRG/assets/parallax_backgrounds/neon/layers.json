@@ -1,0 +1,52 @@
+{
+ "layers": [
+  {
+   "file": "./assets/parallax_backgrounds/neon/layer00.png",
+   "crop": true,
+   "depth": 0.02
+  },
+  {
+   "file": "./assets/parallax_backgrounds/neon/layer01.png",
+   "crop": true,
+   "depth": 0.12,
+   "speed": 9
+  },
+  {
+   "file": "./assets/parallax_backgrounds/neon/layer02.png",
+   "crop": true,
+   "depth": 0.2,
+   "speed": 14
+  },
+  {
+   "file": "./assets/parallax_backgrounds/neon/layer03.png",
+   "crop": true,
+   "depth": 0.3
+  },
+  {
+   "file": "./assets/parallax_backgrounds/neon/layer04.png",
+   "crop": true,
+   "depth": 0.38
+  },
+  {
+   "file": "./assets/parallax_backgrounds/neon/layer05.png",
+   "crop": true,
+   "depth": 0.5
+  },
+  {
+   "file": "./assets/parallax_backgrounds/neon/layer06.png",
+   "crop": true,
+   "depth": 0.62
+  },
+  {
+   "file": "./assets/parallax_backgrounds/neon/layer07.png",
+   "crop": true,
+   "depth": 0.78
+  },
+  {
+   "file": "./assets/parallax_backgrounds/neon/layer08.png",
+   "crop": true,
+   "depth": 0.95
+  }
+ ],
+ "strength": 20
+}
