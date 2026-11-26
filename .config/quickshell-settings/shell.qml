@@ -356,8 +356,12 @@ ShellRoot {
                         anchors.top: logo.bottom
                         anchors.topMargin: 24
                         spacing: 4
+                        // висота пункту підлаштовується, щоб останній не налазив на плашку теми внизу
+                        readonly property int count: navRep.count
+                        readonly property real itemH: Math.max(28, Math.min(40, (sideFoot.y - nav.y - 12 - spacing * (count - 1)) / Math.max(1, count)))
 
                         Repeater {
+                            id: navRep
                             // p — номер сторінки (порядок у меню — як у «Параметрах системи» KDE)
                             model: [
                                 { "p": 4, "icon": "\uf0e7", "label": "Живлення та сон" },
@@ -378,7 +382,7 @@ ShellRoot {
                                 required property var modelData
                                 required property int index
                                 width: nav.width
-                                height: 40
+                                height: nav.itemH
 
                                 Rectangle {
                                     anchors.fill: parent
@@ -439,6 +443,7 @@ ShellRoot {
 
                     // низ сайдбара: тема, версія, підказка
                     Column {
+                        id: sideFoot
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
