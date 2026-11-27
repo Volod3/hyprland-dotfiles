@@ -6,9 +6,10 @@
 Характер теми (одна «фірмова» барва на тему, 1–3 ноти на подію, мало ревербу):
   sky        — «краплі»: синус, що підскакує вгору на старті, як крапля у воду
   neon       — FM-«блип»: чистий цифровий тон, коротке відлуння
-  mountains  — «скло»: кришталевий дзвін, легкий простір
+  mountains  — теплий аналоговий PWM-синт (у дусі Aphex Twin «Pulsewidth»): два розстроєні генератори,
+               «плівкове» плавання висоти, фільтр, що відкривається на атаці
   synthwave  — «чіп»: квадрат 80-х з падінням висоти
-  aurora     — «подих»: мʼякий синус з повітряним шумом
+  aurora     — чистий теплий тон без шуму й писку: мʼякий хорус + октава внизу
 
 Звуки підключення флешки / зарядки беруться з KDE Plasma (тема Ocean), див. tools/sfx.
 """
@@ -50,7 +51,7 @@ def hp(x, cut):
 
 def room(x, size=0.35, mix=0.12):
     n = int(SR * size)
-    ir = lp(rng.standard_normal(n), 5000) * np.exp(-np.arange(n) / SR * (6.9 / size))
+    ir = lp(rng.standard_normal(n), 3200) * np.exp(-np.arange(n) / SR * (6.9 / size))
     ir /= np.sqrt(np.sum(ir ** 2)) + 1e-9
     wet = fftconvolve(x, ir)
     return np.concatenate([x, np.zeros(len(wet) - len(x))]) * (1 - mix) + wet * mix
@@ -88,6 +89,38 @@ def v_glass(f, dur, v):                      # mountains: кришталевий
     return s * v
 
 
+def _saw(ph, K):
+    return sum(np.sin(k * ph) / k for k in range(1, K + 1))
+
+
+def v_pwm(f, dur, v):                        # mountains: теплий аналоговий PWM-синт у дусі Aphex Twin «Pulsewidth»
+    t = tt(dur)
+    K = max(4, min(24, int(7000 / f)))
+    wob = 1 + 0.0025 * np.sin(2 * np.pi * 0.7 * t + 1.3)                # «плівка» — ледь пливе висота
+    out = np.zeros_like(t)
+    for det, lfo_hz, phase0 in ((0.9977, 3.1, 0.0), (1.0023, 4.3, 1.7)):  # два трохи розстроєні генератори
+        ph = 2 * np.pi * np.cumsum(f * det * wob) / SR
+        duty = 0.5 + 0.32 * np.sin(2 * np.pi * lfo_hz * t + phase0)        # широтно-імпульсна модуляція
+        out += _saw(ph, K) - _saw(ph + 2 * np.pi * duty, K)
+    out /= 2.5
+    # фільтр «відкривається» на атаці й закривається — мʼякий аналоговий тембр
+    lo = lp(out, 900); hi = lp(out, 3600)
+    fe = np.exp(-t / max(0.03, dur * 0.25))
+    out = lo * (1 - fe) + hi * fe
+    out = np.tanh(out * 1.6) / np.tanh(1.6)                               # легка «лампова» сатурація
+    a = 0.006
+    return out * env(len(t), a, dur * 0.45, 0.03) * v
+
+
+def v_aura(f, dur, v):                       # aurora: чистий теплий тон без шуму — мʼякий дзвін-пед
+    t = tt(dur)
+    a = min(0.025, dur * 0.2)
+    s = np.sin(2 * np.pi * f * t) + np.sin(2 * np.pi * f * 1.0035 * t)   # мʼякий хорус
+    s += 0.35 * np.sin(2 * np.pi * f * 0.5 * t)                         # тепла октава внизу
+    s += 0.10 * np.sin(2 * np.pi * f * 2 * t) * env(len(t), 0.002, dur * 0.15, 0.01)
+    return lp(s, 2400) * env(len(t), a, dur * 0.42, 0.03) * v * 0.45
+
+
 def v_chip(f, dur, v):                       # synthwave: квадрат з падінням висоти
     t = tt(dur)
     fr = f * (1 + 0.06 * np.exp(-t / 0.02))
@@ -108,9 +141,9 @@ def v_breath(f, dur, v):                     # aurora: мʼякий синус +
 THEMES = {
     "sky":       (v_drop,   79, [0, 2, 4, 7, 9, 12, 14],   (0.30, 0.10), None),
     "neon":      (v_fm,     81, [0, 3, 5, 7, 10, 12, 15],  (0.25, 0.06), (0.075, 0.26)),
-    "mountains": (v_glass,  84, [0, 2, 4, 7, 9, 12, 14],   (0.70, 0.16), None),
+    "mountains": (v_pwm,    69, [0, 2, 4, 7, 9, 12, 14],   (0.55, 0.16), (0.19, 0.18)),
     "synthwave": (v_chip,   74, [0, 3, 5, 7, 10, 12, 15],  (0.35, 0.10), (0.11, 0.22)),
-    "aurora":    (v_breath, 77, [0, 2, 4, 6, 7, 11, 12],   (0.90, 0.20), None),
+    "aurora":    (v_aura,   67, [0, 2, 4, 6, 7, 11, 12],   (1.00, 0.20), None),
 }
 
 # подія → [(ступінь, октава, старт с, тривалість с, гучність)] — мінімум нот
@@ -144,8 +177,8 @@ def render(theme):
     os.makedirs(os.path.join(OUT, theme), exist_ok=True)
     for name in list(EVENTS) + ["screenshot"]:
         if name == "screenshot":
-            c = click()
-            b = voice(midi(root + scale[4] + 12), 0.08, 0.35)
+            c = click() if theme != "aurora" else np.zeros(1)          # у сяйва — без шумового клацання, лише тон
+            b = voice(midi(root + scale[4] + (12 if theme != "aurora" else 0)), 0.08 if theme != "aurora" else 0.22, 0.35 if theme != "aurora" else 0.9)
             mix = np.zeros(int(SR * 0.04) + len(b))
             mix[:len(c)] += c
             mix[int(SR * 0.04):] += b
