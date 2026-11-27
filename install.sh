@@ -53,7 +53,7 @@ if [ "$HOME" != "$OLD_HOME" ]; then
     say "Міняю $OLD_HOME → $HOME у конфігах"
     grep -rIl "$OLD_HOME" "$HOME/.config/hypr" "$HOME/.config/waybar" "$HOME/.config/wallpapers_QS" \
         "$HOME/.config/quickshell-settings" "$HOME/.config/quickshell-launcher" "$HOME/.config/quickshell-cc" \
-        "$HOME/.config/theme-switch" 2>/dev/null | xargs -r sed -i "s|$OLD_HOME|$HOME|g"
+        "$HOME/.config/theme-switch" "$HOME/.config/swaync" 2>/dev/null | xargs -r sed -i "s|$OLD_HOME|$HOME|g"
 fi
 sed -i "s|\"name\": \"voltimeter\"|\"name\": \"$USER\"|" "$HOME/.config/wallpapers_QS/bg_sidepanel/sidepanel.json" || true
 
