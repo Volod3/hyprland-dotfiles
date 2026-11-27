@@ -24,5 +24,7 @@
   "power.on_battery": "balanced",
   "power.on_ac": "performance",
   "cursor.theme": "Minimal",
-  "cursor.size": 24
+  "cursor.size": 24,
+  "lid.ac": "screen",
+  "sound.volume": 70
 }
