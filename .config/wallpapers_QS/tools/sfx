@@ -32,6 +32,14 @@ vol=$(get volume); vol=${vol:-0.7}
 
 theme=$(grep -o '"id": *"[^"]*"' "$QS/themes/current.json" 2>/dev/null | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')
 f="$SND/${theme:-sky}/$ev.wav"
+# підключення — звуки KDE Plasma (тема Ocean, пакет ocean-sound-theme), однакові в усіх темах
+KDE=/usr/share/sounds/ocean/stereo
+case "$ev" in
+    usb-in)  [ -f "$KDE/device-added.oga" ]   && f="$KDE/device-added.oga" ;;
+    usb-out) [ -f "$KDE/device-removed.oga" ] && f="$KDE/device-removed.oga" ;;
+    plug)    [ -f "$KDE/power-plug.oga" ]     && f="$KDE/power-plug.oga" ;;
+    unplug)  [ -f "$KDE/power-unplug.oga" ]   && f="$KDE/power-unplug.oga" ;;
+esac
 [ -f "$f" ] || f="$SND/sky/$ev.wav"
 [ -f "$f" ] || exit 0
 

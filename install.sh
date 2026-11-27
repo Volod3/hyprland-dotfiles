@@ -30,7 +30,7 @@ if [ "$PKGS" = 1 ]; then
         python python-pillow python-numpy ffmpeg ddcutil \
         qt6-5compat qt6-multimedia qt6-svg \
         ttf-jetbrains-mono-nerd ttf-nerd-fonts-symbols noto-fonts-emoji \
-        dolphin celluloid elisa nwg-look
+        ocean-sound-theme dolphin celluloid elisa nwg-look
 fi
 
 # ---------- 2. конфіги ----------
