@@ -639,9 +639,10 @@ ShellRoot {
                 muted: sink ? sink.muted : false
                 icon: sink && sink.bt ? "󰋋" : "󰕾"
                 label: sink ? sink.desc : ""
-                onMoved: (v) => sinkT.go(v)
+                onMoved: (v) => { sinkT.go(v); sinkSfx.restart() }
                 onIconClicked: root.fire(["audio-mute", "sink", String(sink.id)])
                 Timer { id: sinkT; property real v: 0; interval: 60; function go(x) { v = x; if (!running) start() } onTriggered: root.fire(["audio-vol", "sink", String(sink.id), String(v)]) }
+                Timer { id: sinkSfx; interval: 260; onTriggered: Quickshell.execDetached([Quickshell.env("HOME") + "/.config/wallpapers_QS/tools/sfx", "volume"]) }   // «тук» після зміни, як у KDE
             }
             DevPicker { options: opts(sinks, "sink") }
 

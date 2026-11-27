@@ -367,9 +367,9 @@ hl.bind("SUPER + Super_L", hl.dsp.exec_cmd("qs -p /home/voltimeter/.config/wallp
 hl.bind("SUPER + SHIFT + F23", hl.dsp.exec_cmd("qs -p /home/voltimeter/.config/wallpapers_QS/bg_sidepanel/shell.qml ipc call sidepanel toggle"))
 
 
-hl.bind(mainMod .. " + SHIFT + S", hl.dsp.exec_cmd("hyprshot -m region --freeze -o /home/voltimeter/Картинки/\"Знімки вікон\""))
-hl.bind("SHIFT + Print", hl.dsp.exec_cmd("hyprshot -m region --freeze -o /home/voltimeter/Картинки/\"Знімки вікон\""))   -- виділити зону мишкою (Esc — скасувати)
-hl.bind("Print", hl.dsp.exec_cmd("hyprshot -m output -m active -o /home/voltimeter/Картинки/\"Знімки вікон\""))   -- одразу весь активний екран, без «заморожування» й кліку
+hl.bind(mainMod .. " + SHIFT + S", hl.dsp.exec_cmd("hyprshot -m region --freeze -o /home/voltimeter/Картинки/\"Знімки вікон\" && ~/.config/wallpapers_QS/tools/sfx screenshot"))
+hl.bind("SHIFT + Print", hl.dsp.exec_cmd("hyprshot -m region --freeze -o /home/voltimeter/Картинки/\"Знімки вікон\" && ~/.config/wallpapers_QS/tools/sfx screenshot"))   -- виділити зону мишкою (Esc — скасувати)
+hl.bind("Print", hl.dsp.exec_cmd("hyprshot -m output -m active -o /home/voltimeter/Картинки/\"Знімки вікон\" && ~/.config/wallpapers_QS/tools/sfx screenshot"))   -- одразу весь активний екран, без «заморожування» й кліку
 
 
 -- Move focus with mainMod + arrow keys

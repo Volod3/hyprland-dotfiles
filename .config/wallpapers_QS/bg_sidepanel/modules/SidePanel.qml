@@ -817,13 +817,21 @@ Scope {
             root.pending = ({})
             const ls = root.lastSet
             for (const k in p) ls[k] = Date.now()     // відлік «свіжості» — від реальної відправки
-            if (p.vol !== undefined)
+            if (p.vol !== undefined) {
                 Quickshell.execDetached(["wpctl", "set-volume", "-l", "1.5", "@DEFAULT_AUDIO_SINK@", p.vol.toFixed(2)])
+                volSfx.restart()
+            }
             if (p.mic !== undefined)
                 Quickshell.execDetached(["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SOURCE@", p.mic.toFixed(2)])
             if (p.bri !== undefined)
                 Quickshell.execDetached(["brightnessctl", "-n2", "set", Math.round(p.bri * 100) + "%"])
         }
+    }
+
+    Timer {      // «тук» на новій гучності, коли повзунок зупинився (як у KDE)
+        id: volSfx
+        interval: 260
+        onTriggered: Quickshell.execDetached([Quickshell.env("HOME") + "/.config/wallpapers_QS/tools/sfx", "volume"])
     }
 
     HyprlandFocusGrab {

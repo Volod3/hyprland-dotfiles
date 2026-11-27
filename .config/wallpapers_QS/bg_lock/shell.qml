@@ -56,7 +56,8 @@ ShellRoot {
         onCompleted: (result) => {
             root.busy = false
             root.pw = ""
-            if (result === PamResult.Success) { root.unlockNow(); return }
+            if (result === PamResult.Success) { Quickshell.execDetached([Quickshell.env("HOME") + "/.config/wallpapers_QS/tools/sfx", "unlock"]); root.unlockNow(); return }
+            Quickshell.execDetached([Quickshell.env("HOME") + "/.config/wallpapers_QS/tools/sfx", "error"])
             root.fails++
             root.msg = result === PamResult.MaxTries ? "Забагато спроб — зачекай трохи" : "Неправильний пароль"
             root.shake()
@@ -113,7 +114,7 @@ ShellRoot {
         NumberAnimation on shownT { id: appear; running: false; from: 0; to: 1; duration: 700; easing.type: Easing.OutCubic }
         opacity: root.leaving ? 0 : Math.min(1, v.shownT * 2)
         Behavior on opacity { enabled: root.leaving; NumberAnimation { duration: 380; easing.type: Easing.InCubic } }
-        Component.onCompleted: { appear.start(); field.forceActiveFocus() }
+        Component.onCompleted: { appear.start(); field.forceActiveFocus(); if (!root.preview) Quickshell.execDetached([Quickshell.env("HOME") + "/.config/wallpapers_QS/tools/sfx", "lock"]) }
 
         // поле пароля одразу в фокусі — без кліків (поверхня блокування отримує фокус трохи пізніше)
         Timer { id: focusT; interval: 120; repeat: true; running: true; property int n: 0

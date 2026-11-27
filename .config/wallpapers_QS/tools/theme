@@ -184,6 +184,19 @@ hl.config({ general = { col = {
     run(["hyprctl", "eval", 'dofile("%s")' % path])
 
 
+def apply_static(t):
+    """Статичні шпалери (hyprpaper) — показуються в ігровому режимі та «Економії» замість анімованих: знімок теми."""
+    try:
+        mons = [m["name"] for m in json.loads(subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=3).stdout)]
+    except Exception:  # noqa: BLE001
+        mons = []
+    blocks = "".join("wallpaper {\n    monitor = %s\n    path = %s\n    fit_mode = cover\n}\n" % (m, t["preview"]) for m in (mons or ["eDP-1"]))
+    write(os.path.join(HOME, ".config/hypr/hyprpaper.conf"), "# Згенеровано tools/theme — знімок поточної теми\n" + blocks + "splash = false\n")
+    if subprocess.run(["pgrep", "-x", "hyprpaper"], capture_output=True).returncode == 0:   # уже показується — оновити
+        run(["pkill", "-x", "hyprpaper"])
+        subprocess.Popen(["hyprpaper"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
 def apply(tid):
     t = next((x for x in themes() if x["id"] == tid), None)
     if not t:
@@ -196,11 +209,14 @@ def apply(tid):
     t["preview"] = pv if os.path.exists(pv) else os.path.join(PB, t["wallpaper"], "preview.png")
     write(os.path.join(TD, "current.json"), json.dumps(t, ensure_ascii=False, indent=1))
     apply_wallpaper(t)
+    apply_static(t)
     apply_waybar(p)
     apply_swaync(p)
     apply_sidepanel(p)
     apply_kitty(t)
     apply_hypr(t)
+    if os.environ.get("THEME_QUIET") != "1":       # фірмовий звук нової теми
+        subprocess.Popen([os.path.join(QS, "tools/sfx"), "theme"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     return 0
 
 

@@ -54,6 +54,8 @@ DEFAULTS = {
     "devices.automount": True, "devices.onconnect": "menu",
     "eco.hz60": True, "eco.effects": True, "eco.static_wallpaper": True, "eco.hide_pet": True,
     "eco.no_turbo": True, "eco.kbd_light": True, "eco.brightness": 0,
+    # звуки інтерфейсу (tools/sfx) — пишуться в ~/.config/wallpapers_QS/sounds/config.json
+    "sound.enabled": True, "sound.volume": 70, "sound.volumeFeedback": True,
 }
 POWERD = os.path.join(HOME, ".config/wallpapers_QS/tools/powerd")
 POWERD_KEYS = ("gpu.", "power.on_", "power.low_", "power.critical", "battery.", "eco.")
@@ -306,6 +308,18 @@ def cmd_set(key, raw):
         d[key] = coerce(key, raw)
         save(d)
         run([POWERD, "apply"], timeout=20)
+    elif key.startswith("sound."):
+        d[key] = coerce(key, raw)
+        save(d)
+        cfg = {"enabled": d.get("sound.enabled", True), "volume": round(d.get("sound.volume", 70) / 100, 2),
+               "volumeFeedback": d.get("sound.volumeFeedback", True)}
+        p = os.path.join(HOME, ".config/wallpapers_QS/sounds/config.json")
+        with open(p + ".tmp", "w") as f:
+            json.dump(cfg, f)
+        os.replace(p + ".tmp", p)
+        if key == "sound.volume" or (key == "sound.enabled" and cfg["enabled"]):
+            subprocess.Popen([os.path.join(HOME, ".config/wallpapers_QS/tools/sfx"), "notify"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     elif key == "notify.dnd":
         run(["swaync-client", "-dn" if str(raw).lower() in ("1", "true", "on") else "-df"])
     else:

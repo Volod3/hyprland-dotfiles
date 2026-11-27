@@ -11,7 +11,8 @@ case "$1" in
     esac
     v=$(wpctl get-volume @DEFAULT_AUDIO_SINK@)
     p=$(echo "$v" | awk '{printf "%d", $2*100+0.5}'); m=0; echo "$v" | grep -q MUTED && m=1
-    $OSD level volume "$p" "$m" ;;
+    $OSD level volume "$p" "$m"
+    [ "$m" = 0 ] && "$HOME/.config/wallpapers_QS/tools/sfx" volume ;;   # «тук» на новій гучності, як у KDE
   mic)
     wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle
     v=$(wpctl get-volume @DEFAULT_AUDIO_SOURCE@)

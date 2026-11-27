@@ -46,6 +46,18 @@ ShellRoot {
     }
     Timer { id: hideT; onTriggered: root.shown = false }
 
+    // звуки інтерфейсу (tools/sfx — під поточну тему)
+    function sfx(ev) { if (ev) Quickshell.execDetached([Quickshell.env("HOME") + "/.config/wallpapers_QS/tools/sfx", ev]) }
+    function eventSfx(kind, title) {
+        if (kind === "error") return "error"
+        if (kind === "game") return title.indexOf("вимкнено") >= 0 ? "game-off" : "game-on"
+        if (kind === "ac") return "plug"
+        if (kind === "usb") return "usb-in"
+        if (kind === "usb-off") return "usb-out"
+        if (kind === "usb-ok" || kind === "battery" || kind === "eco" || kind === "info") return "notify"
+        return ""
+    }
+
     function levelIcon(kind, v, m) {
         if (kind === "volume") return m || v <= 0 ? "󰝟" : v < 34 ? "󰕿" : v < 67 ? "󰖀" : "󰕾"
         if (kind === "mic") return m ? "󰍭" : "󰍬"
@@ -65,6 +77,7 @@ ShellRoot {
                       muted ? "вимкнено" : p + "%", p / 100, muted, 1500)
         }
         function event(kind: string, title: string, sub: string): void {
+            root.sfx(root.eventSfx(kind, title))
             root.show(root.eventIcon[kind] || "󰋽", kind === "error" ? root.cWarn : (kind === "usb-ok" || kind === "ac") ? root.cGood : root.cAccent,
                       title, sub, -1, false, 3200)
         }
@@ -87,6 +100,7 @@ ShellRoot {
         stdout: StdioCollector {
             onStreamFinished: {
                 const on = root.acOnline === 1
+                root.sfx(on ? "plug" : "unplug")
                 root.show(on ? "󰂄" : "󰁹", on ? root.cGood : root.cAccent, on ? "Зарядку підключено" : "Зарядку відключено",
                           "батарея " + text.trim() + "%", -1, false, 2600)
             }
@@ -144,6 +158,8 @@ ShellRoot {
             onRead: (line) => {
                 let e = null
                 try { e = JSON.parse(line) } catch (x) { return }
+                if (e.ev === "added") root.sfx("usb-in")
+                if (e.ev === "removed") root.sfx("usb-out")
                 if (e.ev === "added") root.show("󱊞", root.cAccent, "Підключено «" + e.label + "»", e.size + " · меню — у панелі вгорі", -1, false, 3500)
                 else if (e.ev === "removed") root.show("󱊟", root.cSub, "Від'єднано «" + e.label + "»", "", -1, false, 2200)
             }

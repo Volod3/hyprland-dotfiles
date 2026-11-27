@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# sfx <подія> — звук інтерфейсу поточної теми (~/.config/wallpapers_QS/sounds/<тема>/<подія>.wav).
+#   події: volume notify error critical plug unplug usb-in usb-out screenshot theme game-on game-off lock unlock
+#   sfx test   — програти всі по черзі
+# Налаштування: ~/.config/wallpapers_QS/sounds/config.json
+#   {"enabled": true, "volume": 0.7, "volumeFeedback": true}   (Win+I → Сповіщення)
+# Звуки генерує tools/themes/sfx_gen.py.
+QS="$HOME/.config/wallpapers_QS"
+SND="$QS/sounds"
+CFG="$SND/config.json"
+ev="${1:-notify}"
+
+if [ "$ev" = test ]; then
+    for e in volume notify error critical plug unplug usb-in usb-out screenshot theme game-on game-off lock unlock; do
+        echo "$e"; "$0" "$e" --force; sleep 1.6
+    done
+    exit 0
+fi
+
+# налаштування (без python — швидко)
+cfg=$(cat "$CFG" 2>/dev/null)
+get() { printf '%s' "$cfg" | grep -o "\"$1\"[[:space:]]*:[[:space:]]*[^,}]*" | head -n1 | sed 's/.*:[[:space:]]*//; s/"//g'; }
+if [ "$2" != --force ]; then
+    [ "$(get enabled)" = false ] && exit 0
+    [ "$ev" = volume ] && [ "$(get volumeFeedback)" = false ] && exit 0
+    # в ігровому режимі — лише важливе
+    if [ -f "$HOME/.cache/gamemode.json" ] && grep -q '"active": *true' "$HOME/.cache/gamemode.json"; then
+        case "$ev" in critical|error|game-off|volume) ;; *) exit 0 ;; esac
+    fi
+fi
+vol=$(get volume); vol=${vol:-0.7}
+
+theme=$(grep -o '"id": *"[^"]*"' "$QS/themes/current.json" 2>/dev/null | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')
+f="$SND/${theme:-sky}/$ev.wav"
+[ -f "$f" ] || f="$SND/sky/$ev.wav"
+[ -f "$f" ] || exit 0
+
+# звук гучності — лише один за раз (при утриманні клавіші не накопичуються)
+if [ "$ev" = volume ]; then
+    pidf="${XDG_RUNTIME_DIR:-/tmp}/sfx-volume.pid"
+    [ -f "$pidf" ] && kill "$(cat "$pidf")" 2>/dev/null
+    pw-play --volume "$vol" "$f" >/dev/null 2>&1 &
+    echo $! > "$pidf"
+    exit 0
+fi
+setsid -f pw-play --volume "$vol" "$f" >/dev/null 2>&1

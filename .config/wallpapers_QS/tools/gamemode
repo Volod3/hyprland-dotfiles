@@ -35,7 +35,7 @@ STATE = os.path.join(HOME, ".cache/gamemode.json")
 LOG = os.path.join(HOME, ".cache/gamemode.log")
 PARALLAX = os.path.join(QS, "bg_parallax_MDRG/shell.qml")
 PET = os.path.join(QS, "bg_pet/shell.qml")
-STATIC = os.path.join(QS, "bg_parallax_MDRG/assets/images/wp4.jpg")
+STATIC = os.path.join(HOME, ".config/hypr/hyprpaper.conf")   # знімок поточної теми (пише tools/theme)
 
 GAME_CLASS = re.compile(r"^(steam_app_[1-9]\d*|gamescope|.*\.exe|minecraft.*|sober|org\.vinegarhq\.sober|roblox.*|osu!?|retroarch|"
                         r"hl2_linux|csgo_linux64|cs2|dota2|factorio|terraria.*|stardew.*|hollow_knight.*|celeste.*)$", re.I)

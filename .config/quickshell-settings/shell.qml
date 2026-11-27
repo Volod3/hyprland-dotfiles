@@ -181,6 +181,12 @@ ShellRoot {
         { title: "Сповіщення", icon: "\uf0f3", items: [
             { type: "toggle", key: "notify.dnd", label: "Не турбувати", hint: "сповіщення не спливатимуть, але лишаться в центрі" },
             { type: "button", label: "Центр сповіщень", text: "Відкрити", cmd: "swaync-client -t -sw" }
+        ]},
+        { title: "Звуки інтерфейсу", icon: "\uf028", items: [
+            { type: "toggle", key: "sound.enabled", label: "Звуки", hint: "помилки, флешки, зарядка, знімки екрана, блокування, теми — у стилі поточної теми" },
+            { type: "toggle", key: "sound.volumeFeedback", label: "Звук при зміні гучності", hint: "короткий «тук» на новій гучності, як у KDE" },
+            { type: "slider", key: "sound.volume", label: "Гучність звуків", from: 5, to: 100, step: 5, suffix: "%" },
+            { type: "button", label: "Прослухати всі звуки теми", hint: "по черзі, ~20 с", text: "Грати", cmd: "~/.config/wallpapers_QS/tools/sfx test" }
         ]}
     ]
 

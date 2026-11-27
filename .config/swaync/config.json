@@ -31,7 +31,7 @@
   "hide-on-clear": false,
   "hide-on-action": true,
   "text-empty": "Сповіщень нема",
-  "script-fail-notify": true,
+  "script-fail-notify": false,
   "widgets": [
     "inhibitors",
     "title",
@@ -76,6 +76,13 @@
           "update-command": "sh -c '[ \"$(nmcli radio wifi)\" = enabled ] && echo true || echo false'"
         }
       ]
+    }
+  },
+  "scripts": {
+    "sfx-critical": {
+      "exec": "/home/voltimeter/.config/wallpapers_QS/tools/sfx error",
+      "urgency": "Critical",
+      "app-name": "^(?!Батарея$|Живлення$).*"
     }
   }
 }
